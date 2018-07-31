@@ -78,21 +78,35 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
         }
     }
     //LDD/STD
-    else if((*code & 0xF000) == 0x8000){
+    else if((*code & 0xD000) == 0x8000){
         int Rd = (*code & 0x01F0) >> 4;
         int K = ((*code & 0x2000) >> 8) + ((*code & 0x0C00) >> 7) + (*code & 0x0007);
-        switch(*code & 0x0208){
-            case 0x0000: printf("LDD    R%d, Z + %d", Rd, K); break;
-            case 0x0008: printf("LDD    R%d, Y + %d", Rd, K); break;
-            case 0x0200: printf("STD    Z + %d, R%d", K, Rd); break;
-            case 0x0208: printf("STD    Y + %d, R%d", K, Rd); break;
+        if(K != 0){
+            switch(*code & 0x0208){
+                case 0x0000: printf("LDD    R%d, Z + %d", Rd, K); break;
+                case 0x0008: printf("LDD    R%d, Y + %d", Rd, K); break;
+                case 0x0200: printf("STD    Z + %d, R%d", K, Rd); break;
+                case 0x0208: printf("STD    Y + %d, R%d", K, Rd); break;
+            }
+        } else {
+            switch(*code & 0x0208){
+                case 0x0000: printf("LD     R%d, Z", Rd); break;
+                case 0x0008: printf("LD     R%d, Y", Rd); break;
+                case 0x0200: printf("ST     Z, R%d", Rd); break;
+                case 0x0208: printf("ST     Y, R%d", Rd); break;
+            }
         }
     }
     //Load-store operations
     else if((*code & 0xFC00) == 0x9000){
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x020F){
-            
+            case 0x0000: printf("LDS    R%d, 0x%04x", Rd, code[1]); opWords = 2; break;
+            case 0x0200: printf("STS    0x%04x, R%d", code[1], Rd); opWords = 2; break;
+            case 0x0001: printf("LD     R%d, Z+", Rd); break;
+            case 0x0009: printf("LD     R%d, Y+", Rd); break;
+            case 0x0201: printf("ST     R%d, Z+", Rd); break;
+            //TODO: Rest of stores and loads
         }
     }
     //Zero-operand instructions
