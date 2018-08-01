@@ -1,11 +1,43 @@
-#include <stdio.h>
-#include <stdint.h>
+#include "disassembler.h"
 
-void unimplementedInstruction(){
-    printf("ERROR: UNKNOWN OPCODE");
+int main(int argc, char** argv){
+    if(argc < 2){
+        fprintf(stderr, "Please provide a compiled AVR binary file to disassemble.\n");
+        return 1;
+    }
+    FILE* compiledFile = fopen(argv[1], "rb");
+    fseek(compiledFile, 0, SEEK_END);
+    long flength = ftell(compiledFile);
+    fseek(compiledFile, 0, SEEK_SET);
+    uint16_t *codeBuffer = calloc(flength / 2, sizeof(uint16_t));
+    fread(codeBuffer, sizeof(uint16_t), flength / 2, compiledFile);
+    fclose(compiledFile);
+    uint32_t pc = 0;
+    while(pc < flength / 2){
+        int incr = disassembleAVROp(codeBuffer, pc);
+        if(incr == 0)
+            return -1;
+        pc += incr;
+    }
+    return 0;
 }
 
-int disassembleAVROp(uint16_t *codeBuffer, int pc){
+uint16_t swapEndianness(uint16_t num){
+    uint16_t b0,b1;
+
+    b0 = (num & 0x00ff) << 8u;
+    b1 = (num & 0xff00) >> 8u;
+
+    return b0 | b1;
+}
+
+
+void unimplementedInstruction(int *opWords){
+    printf("ERROR: UNKNOWN OPCODE");
+    *opWords = 0;
+}
+
+int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc){
     uint16_t *code = &codeBuffer[pc];
     int opWords = 1;
     printf("%04x ", pc);
@@ -13,17 +45,19 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
     if((*code & 0xFC00) == 0x0000){
         switch(*code & 0x0300){
             case 0x0000: printf("NOP"); break;
-            case 0x0100:
+            case 0x0100:{
                 int Rd = ((*code & 0x00F0) >> 4) * 2;
                 int Rr = (*code & 0x000F) * 2;
                 printf("MOVW   R%d:R%d, R%d:R%d", Rd + 1, Rd, Rr + 1, Rr);
                 break;
-            case 0x0200:
+            }
+            case 0x0200:{
                 int Rd = ((*code & 0x00F0) >> 4) + 16;
                 int Rr = (*code & 0x000F) + 16;
                 printf("MULS   R%d, R%d", Rd, Rr);
                 break;
-            case 0x0300:
+            }
+            case 0x0300:{
                 int Rd = ((*code & 0x0070) >> 4) + 16;
                 int Rr = (*code & 0x0007) + 16;
                 switch(*code & 0x0088){
@@ -33,6 +67,7 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
                     case 0x0088: printf("FMULSU R%d, R%d", Rd, Rr); break;
                 }
                 break;
+            }
         }
     }
     //Two-operand instructions
@@ -40,7 +75,7 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
         int Rd = (*code & 0x01F0) >> 4;
         int Rr = (*code & 0x000F) + (*code & 0x0200) >> 5;
         switch(*code & 0x3C00){
-            case 0x0000: unimplementedInstruction(); break;
+            case 0x0000: unimplementedInstruction(&opWords); break;
             case 0x0400: printf("CPC    R%d, R%d", Rd, Rr); break;
             case 0x1400: printf("CP     R%d, R%d", Rd, Rr); break;
             case 0x0800: printf("SBC    R%d, R%d", Rd, Rr); break;
@@ -62,12 +97,13 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
             case 0x2400: printf("EOR    R%d, R%d", Rd, Rr); break;
             case 0x2800: printf("OR     R%d, R%d", Rd, Rr); break;
             case 0x2C00: printf("MOV    R%d, R%d", Rd, Rr); break;
-            default:
+            default:{
           //case 0x3X00:
                 Rd = (Rd & 0x000F) + 16;
                 int K = (*code & 0x0F00) >> 4 + (*code & 0x000F);
                 printf("CPI    R%d, %d", Rd, K);
                 break;
+            }
         }
     }
     //Register-immediate instructions
@@ -131,7 +167,7 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
             case 0x020E: printf("ST     -X, R%d", Rd); break;
             case 0x000F: printf("POP    R%d", Rd); break;
             case 0x020F: printf("PUSH   R%d", Rd); break;
-            default: unimplementedInstruction(); break;
+            default: unimplementedInstruction(&opWords); break;
         }
     }
     //Zero-operand instructions
@@ -148,7 +184,7 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
             case 0x00D0: printf("ELPM"); break;
             case 0x00E0: printf("SPM"); break;
             case 0x00F0: printf("SPM    Z+"); break;
-            default: printf("(reserved)"); break;
+            default: unimplementedInstruction(&opWords); break;
         }
     }
     //One-operand instructions
@@ -159,7 +195,7 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
             case 0x0001: printf("NEG    R%d", Rd); break;
             case 0x0002: printf("SWAP   R%d", Rd); break;
             case 0x0003: printf("INC    R%d", Rd); break;
-            case 0x0004: printf("(reserved)"); break;
+            case 0x0004: unimplementedInstruction(&opWords); break;
             case 0x0005: printf("ASR    R%d", Rd); break;
             case 0x0006: printf("LSR    R%d", Rd); break;
             case 0x0007: printf("ROR    R%d", Rd); break;
@@ -199,15 +235,17 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
                     case 0x0110: printf("EICALL"); break;
                 }
                 break;
-            case 0x0002:
+            case 0x0002:{
                 int Rd = (*code & 0x01F0) >> 4;
                 printf("DEC    R%d", Rd);
                 break;
-            case 0x0003:
+            }
+            case 0x0003:{
                 int K = (*code & 0x00F0) >> 4;
                 printf("DES    0x%1x", K);
                 break;
-            default:
+            }
+            default:{
           //case 0b010x, 0b011x:
                 //2 word (4 byte) instruction. 22 bit Parameter K stored as: 
                 //0b0000000k kkkk000k kkkkkkkk kkkkkkkk
@@ -218,6 +256,7 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
                 }
                 opWords = 2;
                 break;
+            }
         }
     }
     //ADIW/SBIW
@@ -314,7 +353,8 @@ int disassembleAVROp(uint16_t *codeBuffer, int pc){
     }
     //Reserved opcodes
     else{
-        printf("(reserved)");
+        unimplementedInstruction(&opWords);
     }
+    printf("\n");
     return opWords;
 }
