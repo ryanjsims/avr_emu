@@ -12,6 +12,10 @@ int main(int argc, char** argv){
     uint16_t *codeBuffer = calloc(flength / 2, sizeof(uint16_t));
     fread(codeBuffer, sizeof(uint16_t), flength / 2, compiledFile);
     fclose(compiledFile);
+	uint16_t *swappedCodeBuffer = calloc(flength / 2, sizeof(uint16_t));
+	for(int i = 0; i < flength / 2; i++){
+		swappedCodeBuffer[i] = swapEndianness(codeBuffer[i]);
+	}
     uint32_t pc = 0;
     while(pc < flength / 2){
         int incr = disassembleAVROp(codeBuffer, pc);
