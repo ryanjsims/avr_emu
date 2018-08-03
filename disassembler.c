@@ -5,15 +5,35 @@ int main(int argc, char** argv){
         fprintf(stderr, "Please provide a compiled AVR binary file to disassemble.\n");
         return 1;
     }
+    FILE* ioMapFile = NULL;
+    for(int i = 0; i < argc; i++){
+        if((strcmp(argv[i], "--io-map") == 0 || strcmp(argv[i], "-i") == 0) &&
+                i + 1 < argc){
+            ioMapFile = fopen(argv[i + 1], "r");
+            break;
+        }
+    }
+
+    //Open file and find the length of the file
     FILE* compiledFile = fopen(argv[1], "rb");
     fseek(compiledFile, 0, SEEK_END);
     long flength = ftell(compiledFile);
     fseek(compiledFile, 0, SEEK_SET);
+
+    //Allocate 2 buffers long enough to contain all bytes in the file
+    //One will have it's endianness swapped
     uint16_t *codeBuffer = calloc(flength / 2, sizeof(uint16_t));
+	uint16_t *swappedCodeBuffer = calloc(flength / 2, sizeof(uint16_t));
+
+    //Buffer to contain subroutine locations
+    uint32_t *subBuffer = calloc(flength / 2, sizeof(uint32_t));
+    
+    int mapLen = 0;
+    char **ioMap = buildIORegMap(ioMapFile, &mapLen);
+
     fread(codeBuffer, sizeof(uint16_t), flength / 2, compiledFile);
     fclose(compiledFile);
-	uint16_t *swappedCodeBuffer = calloc(flength / 2, sizeof(uint16_t));
-    uint32_t *subBuffer = calloc(flength / 2, sizeof(uint32_t));
+
     long subs = 0, maxSubs = flength / 2;
 	for(int i = 0; i < flength / 2; i++){
 		swappedCodeBuffer[i] = swapEndianness(codeBuffer[i]);
@@ -25,7 +45,7 @@ int main(int argc, char** argv){
     }
     pc = 0;
     while(pc < flength / 2){
-        int incr = disassembleAVROp(codeBuffer, pc, subBuffer, subs);
+        int incr = disassembleAVROp(codeBuffer, pc, subBuffer, subs, ioMap, mapLen);
         if(incr == 0)
             return -1;
         pc += incr;
@@ -55,6 +75,42 @@ void unimplementedInstruction(int *opWords, uint16_t opCode){
     //*opWords = 0;
 }
 
+char **buildIORegMap(FILE *ioMapFile, int *mapLen){
+    *mapLen = 64;
+    char **toReturn = malloc(*mapLen * sizeof(char*));
+    int i = 0;
+
+    while(ioMapFile != NULL && feof(ioMapFile) != EOF){
+        char *readStr = malloc(16 * sizeof(char));
+        int n = 16;
+        fgets(readStr, n, ioMapFile);
+        char *toFree = readStr;
+        char *newline = strchr(readStr, '\n');
+        if(newline != NULL){
+            *newline = '\0';
+        }
+        readStr = strchr(readStr, ' ');
+        if(readStr != NULL){
+            readStr = readStr + 1;
+            toReturn[i] = malloc((strlen(readStr) + 1) * sizeof(char));
+            strcpy(toReturn[i], readStr);
+            i++;
+        }
+        free(toFree);
+        if(readStr == NULL)
+            break;
+    }
+    if(ioMapFile == NULL){
+        for(i; i < *mapLen; i++){
+            toReturn[i] = malloc(3 * sizeof(char));
+            sprintf(toReturn[i], "%d", i);
+        }
+    }
+    if(i > *mapLen)
+        *mapLen = i;
+    return toReturn;
+}
+
 int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer, long *subs, long maxSubs){
     uint16_t *code = &codeBuffer[pc];
     switch(*code & 0xF000){
@@ -77,20 +133,20 @@ int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer,
     return 1;
 }
 
-int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer, long subs){
+int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
+                     uint32_t *subBuffer, long subs, 
+                     char **ioMap, int mapLen){
     uint16_t *code = &codeBuffer[pc];
     int opWords = 1;
     printf("%06x ", pc);
-    int subFound = 0;
+    char subroutine[10] = "         ";
     for(long i = 0; i < subs; i++){
         if(pc == subBuffer[i]){
-            printf("sub%04lX: ", i);
-            subFound = 1;
+            sprintf(subroutine, "sub%04lX: ", i);
             break;
         }
     }
-    if(!subFound)
-        printf("         ");
+    printf("%s", subroutine);
     //Basic instructions
     if((*code & 0xFC00) == 0x0000){
         switch(*code & 0x0300){
@@ -324,10 +380,10 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer, lon
         int Ra = (*code & 0x00F8) >> 3;
         int bit = (*code & 0x0007);
         switch(*code & 0x0300){
-            case 0x0000: printf("CBI    %d, %d", Ra, bit); break;
-            case 0x0200: printf("SBI    %d, %d", Ra, bit); break;
-            case 0x0100: printf("SBIC   %d, %d", Ra, bit); break;
-            case 0x0300: printf("SBIS   %d, %d", Ra, bit); break;
+            case 0x0000: printf("CBI    %s, %d", ioMap[Ra], bit); break;
+            case 0x0200: printf("SBI    %s, %d", ioMap[Ra], bit); break;
+            case 0x0100: printf("SBIC   %s, %d", ioMap[Ra], bit); break;
+            case 0x0300: printf("SBIS   %s, %d", ioMap[Ra], bit); break;
         }
     }
     //MUL (Unsigned)
@@ -343,8 +399,8 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer, lon
         int Rio = ((*code & 0x0600) >> 5) | (*code & 0x000F);
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x0800){
-            case 0x0000: printf("IN     R%d, %d", Rd, Rio); break;
-            case 0x0800: printf("OUT    %d, R%d", Rio, Rd); break;
+            case 0x0000: printf("IN     R%d, %s", Rd, ioMap[Rio]); break;
+            case 0x0800: printf("OUT    %s, R%d", ioMap[Rio], Rd); break;
         }
     }
     //RJMP/RCALL to PC + signed 12 bit immediate value
