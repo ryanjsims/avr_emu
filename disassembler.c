@@ -2,7 +2,7 @@
 
 int main(int argc, char** argv){
     if(argc < 2){
-        fprintf(stderr, "Please provide a compiled AVR binary file to disassemble.\n");
+        fprintf(stderr, "Please provide a compiled AVR elf file to disassemble.\n");
         return 1;
     }
     FILE* ioMapFile = NULL;
@@ -20,34 +20,38 @@ int main(int argc, char** argv){
     long flength = ftell(compiledFile);
     fseek(compiledFile, 0, SEEK_SET);
 
-    //Allocate 2 buffers long enough to contain all bytes in the file
-    //One will have it's endianness swapped
-    uint16_t *codeBuffer = calloc(flength / 2, sizeof(uint16_t));
-	uint16_t *swappedCodeBuffer = calloc(flength / 2, sizeof(uint16_t));
+    //Get code from elf file
+    uint32_t wordLen = 0;
+    uint16_t *text, *data, *bss;
+    uint16_t *codeBuffer = getBinary(compiledFile, &text, &data, &bss, &wordLen);
+    fclose(compiledFile);
 
     //Buffer to contain subroutine locations
-    uint32_t *subBuffer = calloc(flength / 2, sizeof(uint32_t));
+    uint32_t *subBuffer = calloc(wordLen, sizeof(uint32_t));
     
     int mapLen = 0;
     char **ioMap = buildIORegMap(ioMapFile, &mapLen);
 
-    fread(codeBuffer, sizeof(uint16_t), flength / 2, compiledFile);
-    fclose(compiledFile);
-
-    long subs = 0, maxSubs = flength / 2;
-	for(int i = 0; i < flength / 2; i++){
+    long subs = 0, maxSubs = wordLen;
+/*
+    for(int i = 0; i < flength / 2; i++){
 		swappedCodeBuffer[i] = swapEndianness(codeBuffer[i]);
 	}
+*/
     uint32_t pc = 0;
-    while(pc < flength / 2){
+    while(pc < maxSubs){
         int incr = buildSubroutineTable(codeBuffer, pc, subBuffer, &subs, maxSubs);
         pc += incr;
     }
     pc = 0;
-    while(pc < flength / 2){
-        int incr = disassembleAVROp(codeBuffer, pc, subBuffer, subs, ioMap, mapLen);
+    while(pc < wordLen){
+        int incr = disassembleAVROp(codeBuffer, pc, subBuffer, subs, ioMap, mapLen, text, data, bss);
         if(incr == 0)
-            return -1;
+            break;
+        pc += incr;
+    }
+    while(pc < wordLen){
+        int incr = printData(codeBuffer, pc, data, bss);
         pc += incr;
     }
     return 0;
@@ -92,8 +96,13 @@ char **buildIORegMap(FILE *ioMapFile, int *mapLen){
         readStr = strchr(readStr, ' ');
         if(readStr != NULL){
             readStr = readStr + 1;
-            toReturn[i] = malloc((strlen(readStr) + 1) * sizeof(char));
-            strcpy(toReturn[i], readStr);
+            if(strcmp(readStr, "Reserved") != 0){
+                toReturn[i] = malloc((strlen(readStr) + 1) * sizeof(char));
+                strcpy(toReturn[i], readStr);
+            } else {
+                toReturn[i] = malloc((strlen(readStr) + strlen(" (0x00)") + 1) * sizeof(char));
+                sprintf(toReturn[i], "%s (0x%02X)", readStr, i + 0x20);
+            }
             i++;
         }
         free(toFree);
@@ -126,19 +135,38 @@ int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer,
         case 0xD000:{
                 int16_t offset = (int16_t)(*code & 0x0FFF);
                 if(offset & 0x0800) offset |= 0xF000;
-                subBuffer[*subs] = pc + offset;
+                subBuffer[*subs] = pc + offset + 1;
                 *subs += 1;
             }
     }
     return 1;
 }
 
+int printData(uint16_t *codeBuffer, uint32_t pc, uint16_t *data, uint16_t *bss){
+    uint16_t *word = &codeBuffer[pc];
+    if(word == data){
+        printf(".data\n");
+    } else if(word == bss){
+        printf(".bss\n");
+    }
+    printf("%06X          %04X\n", pc, *word);
+    return 1;
+}
+
 int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
                      uint32_t *subBuffer, long subs, 
-                     char **ioMap, int mapLen){
+                     char **ioMap, int mapLen, 
+                     uint16_t *addrText, uint16_t *addrData, uint16_t *addrBss){
     uint16_t *code = &codeBuffer[pc];
     int opWords = 1;
-    printf("%06x ", pc);
+    if(code == addrText){
+        printf(".text\n");
+    } else if(code == addrData){
+        return 0;
+    } else if(code == addrBss){
+        return 0;
+    }
+    printf("%06X ", pc);
     char subroutine[10] = "         ";
     for(long i = 0; i < subs; i++){
         if(pc == subBuffer[i]){
@@ -182,27 +210,27 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
         int Rr = (*code & 0x000F) + (*code & 0x0200) >> 5;
         switch(*code & 0x3C00){
             case 0x0000: fprintf(stderr, "Two operand\n"); unimplementedInstruction(&opWords, *code); break;
-            case 0x0400: printf("CPC    R%d, R%d", Rd, Rr); break;
-            case 0x1400: printf("CP     R%d, R%d", Rd, Rr); break;
-            case 0x0800: printf("SBC    R%1$d, R%2$d\t; *R%1$d = *R%1$d - *R%2$d - C", Rd, Rr); break;
-            case 0x1800: printf("SUB    R%1$d, R%2$d\t; *R%1$d = *R%1$d - *R%2$d", Rd, Rr); break;
+            case 0x0400: printf("CPC    R%1$d, R%2$d\t\t; Compare *R%1$d with *R%2$d, using carry", Rd, Rr); break;
+            case 0x1400: printf("CP     R%1$d, R%2$d\t\t; Compare *R%1$d with *R%2$d", Rd, Rr); break;
+            case 0x0800: printf("SBC    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d - *R%2$d - C", Rd, Rr); break;
+            case 0x1800: printf("SUB    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d - *R%2$d", Rd, Rr); break;
             case 0x0C00:
                 if(Rd == Rr)
-                    printf("LSL    R%1$d\t\t; *R%1$d <<= 1", Rd);
+                    printf("LSL    R%1$d\t\t\t; *R%1$d <<= 1", Rd);
                 else
-                    printf("ADD    R%1$d, R%2$d\t; *R%1$d = *R%1$d + *R%2$d", Rd, Rr);
+                    printf("ADD    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d + *R%2$d", Rd, Rr);
                 break;
             case 0x1C00:
                 if(Rd == Rr)
-                    printf("ROL    R%d", Rd);
+                    printf("ROL    R%1$d\t\t\t; *R%1$d = (*R%1$d << 1) | 0b0000000C", Rd);
                 else
-                    printf("ADC    R%1$d, R%2$d\t; *R%1$d = *R%1$d + *R%2$d + C", Rd, Rr);
+                    printf("ADC    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d + *R%2$d + C", Rd, Rr);
                 break;
-            case 0x1000: printf("CPSE   R%d, R%d", Rd, Rr); break;
-            case 0x2000: printf("AND    R%d, R%d", Rd, Rr); break;
-            case 0x2400: printf("EOR    R%d, R%d", Rd, Rr); break;
-            case 0x2800: printf("OR     R%d, R%d", Rd, Rr); break;
-            case 0x2C00: printf("MOV    R%d, R%d", Rd, Rr); break;
+            case 0x1000: printf("CPSE   R%1$d, R%2$d\t\t; if(*R%1$d == *R%2$d) skip next", Rd, Rr); break;
+            case 0x2000: printf("AND    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d & *R%2$d", Rd, Rr); break;
+            case 0x2400: printf("EOR    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d ^ *R%2$d", Rd, Rr); break;
+            case 0x2800: printf("OR     R%1$d, R%2$d\t\t; *R%1$d = *R%1$d | *R%2$d", Rd, Rr); break;
+            case 0x2C00: printf("MOV    R%1$d, R%2$d\t\t; *R%1$d = *R%2$d", Rd, Rr); break;
             default:{
           //case 0x3X00:
                 Rd = (Rd & 0x000F) + 16;
@@ -217,10 +245,10 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
         int Rd = ((*code & 0x00F0) >> 4) + 16;
         int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
         switch(*code & 0x3000){
-            case 0x0000: printf("SBCI   R%d, %d", Rd, K); break;
-            case 0x1000: printf("SUBI   R%d, %d", Rd, K); break;
-            case 0x2000: printf("ORI    R%d, %d", Rd, K); break;
-            case 0x3000: printf("ANDI   R%d, %d", Rd, K); break;
+            case 0x0000: printf("SBCI   R%1$d, %2$d\t\t; *R%1$d = *R%1$d - %2$d - C", Rd, K); break;
+            case 0x1000: printf("SUBI   R%1$d, %2$d\t\t; *R%1$d = *R%1$d - %2$d", Rd, K); break;
+            case 0x2000: printf("ORI    R%1$d, %2$d\t\t; *R%1$d = *R%1$d | 0x%2$X", Rd, K); break;
+            case 0x3000: printf("ANDI   R%1$d, %2$d\t\t; *R%1$d = *R%1$d & 0x%2$X", Rd, K); break;
         }
     }
     //LDD/STD
@@ -297,14 +325,14 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
     else if((*code & 0xFE08) == 0x9400){
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x0007){
-            case 0x0000: printf("COM    R%d", Rd); break;
-            case 0x0001: printf("NEG    R%d", Rd); break;
-            case 0x0002: printf("SWAP   R%d", Rd); break;
-            case 0x0003: printf("INC    R%d", Rd); break;
+            case 0x0000: printf("COM    R%1$d\t\t\t; *R%1$d = ~*R%1$d", Rd); break;
+            case 0x0001: printf("NEG    R%1$d\t\t\t; *R%1$d = -*R%1$d", Rd); break;
+            case 0x0002: printf("SWAP   R%1$d\t\t\t; *R%1$d = (*R%1$d & 0xF0 >> 4) | (*R%1$d & 0x0F << 4)", Rd); break;
+            case 0x0003: printf("INC    R%1$d\t\t\t; *R%1$d += 1", Rd); break;
             case 0x0004: fprintf(stderr, "One operand\n"); unimplementedInstruction(&opWords, *code); break;
-            case 0x0005: printf("ASR    R%d", Rd); break;
-            case 0x0006: printf("LSR    R%d", Rd); break;
-            case 0x0007: printf("ROR    R%d", Rd); break;
+            case 0x0005: printf("ASR    R%1$d\t\t\t; *R%1$d = (*R%1$d >> 1) | (*R%1$d & 0x80)", Rd); break;
+            case 0x0006: printf("LSR    R%1$d\t\t\t; *R%1$d >>= 1", Rd); break;
+            case 0x0007: printf("ROR    R%1$d\t\t\t; *R%1$d = (*R%1$d >> 1) | 0bC0000000", Rd); break;
         }
     }
     //SE*/CL*: * in {C, Z, N, V, S, H, T, I}
@@ -419,17 +447,17 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
     else if((*code & 0xF000) == 0xE000){
         int K = ((*code & 0x0F00) >> 4) | (*code & 0x000F);
         int Rd = ((*code & 0x00F0) >> 4) + 16; //16 <= Rd <= 31
-        printf("LDI    R%d, %d", Rd, K);
+        printf("LDI    R%1$d, %2$d\t\t; *R%1$d = %2$d", Rd, K);
     }
     //SBRC/SBRS, BLD/BST
     else if((*code & 0xF808) == 0xF800){
         int Rd = (*code & 0x01F0) >> 4;
         int bit = (*code & 0x0007);
         switch(*code & 0x0600){
-            case 0x0000: printf("BLD    R%d, %d", Rd, bit); break;
-            case 0x0200: printf("BST    R%d, %d", Rd, bit); break;
-            case 0x0400: printf("SBRC   R%d, %d", Rd, bit); break;
-            case 0x0600: printf("SBRS   R%d, %d", Rd, bit); break;
+            case 0x0000: printf("BLD    R%1$d, %2$d\t\t; Set bit %2$d of R%1$d to T from SREG", Rd, bit); break;
+            case 0x0200: printf("BST    R%1$d, %2$d\t\t; Set SREG T bit to bit %2$d from R%1$d", Rd, bit); break;
+            case 0x0400: printf("SBRC   R%1$d, %2$d\t\t; if(!(*R%1$d & 0x%3$02X)) skip next", Rd, bit, 1 << bit); break;
+            case 0x0600: printf("SBRS   R%1$d, %2$d\t\t; if(*R%1$d & 0x%3$02X) skip next", Rd, bit, 1 << bit); break;
         }
     }
     //Conditional branches
