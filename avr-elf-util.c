@@ -42,7 +42,7 @@ uint16_t *getBinary(FILE* elfFile, uint16_t **text, uint16_t **data, uint16_t **
     if(sBss != NULL){
         binSize += sBss->sh_size;
     }
-    uint32_t wordSize = binSize / 2;
+    uint32_t wordSize = binSize / 2 + binSize % 2;
     uint16_t *codeBuffer = malloc(wordSize);
     *wordLen = wordSize;
     
@@ -71,7 +71,8 @@ void readBinaries(FILE* elfFile, uint16_t *buffer,
         *(ptrs[i]) = &buffer[bufferOffset];
         fseek(elfFile, (long)sections[i]->sh_offset, SEEK_SET);
         bufferOffset += fread(&buffer[bufferOffset], sizeof(uint16_t), 
-                sections[i]->sh_size / sizeof(uint16_t), elfFile);
+                sections[i]->sh_size / sizeof(uint16_t) 
+                + sections[i]->sh_size % sizeof(uint16_t), elfFile);
     }
     fseek(elfFile, offset, SEEK_SET);
 }

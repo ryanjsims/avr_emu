@@ -6,7 +6,6 @@
 #include <string.h>
 #include "avr-elf-util.h"
 
-uint16_t swapEndianness(uint16_t num);
 void unimplementedInstruction(int*, uint16_t);
 char** buildIORegMap(FILE* mapFile, int* length);
 int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer, long *subs, long maxSubs);

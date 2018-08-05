@@ -17,7 +17,6 @@ int main(int argc, char** argv){
     //Open file and find the length of the file
     FILE* compiledFile = fopen(argv[1], "rb");
     fseek(compiledFile, 0, SEEK_END);
-    long flength = ftell(compiledFile);
     fseek(compiledFile, 0, SEEK_SET);
 
     //Get code from elf file
@@ -33,11 +32,7 @@ int main(int argc, char** argv){
     char **ioMap = buildIORegMap(ioMapFile, &mapLen);
 
     long subs = 0, maxSubs = wordLen;
-/*
-    for(int i = 0; i < flength / 2; i++){
-		swappedCodeBuffer[i] = swapEndianness(codeBuffer[i]);
-	}
-*/
+    
     uint32_t pc = 0;
     while(pc < maxSubs){
         int incr = buildSubroutineTable(codeBuffer, pc, subBuffer, &subs, maxSubs);
@@ -56,16 +51,6 @@ int main(int argc, char** argv){
     }
     return 0;
 }
-
-uint16_t swapEndianness(uint16_t num){
-    uint16_t b0,b1;
-
-    b0 = (num & 0x00ff) << 8u;
-    b1 = (num & 0xff00) >> 8u;
-
-    return b0 | b1;
-}
-
 
 void unimplementedInstruction(int *opWords, uint16_t opCode){
     printf("UNKNOWN OPCODE (data?) -- 0b");
@@ -110,7 +95,7 @@ char **buildIORegMap(FILE *ioMapFile, int *mapLen){
             break;
     }
     if(ioMapFile == NULL){
-        for(i; i < *mapLen; i++){
+        for(i = 0; i < *mapLen; i++){
             toReturn[i] = malloc(3 * sizeof(char));
             sprintf(toReturn[i], "%d", i);
         }
@@ -124,20 +109,27 @@ int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer,
     uint16_t *code = &codeBuffer[pc];
     switch(*code & 0xF000){
         case 0x9000:
-            if(*code & 0x0E0E == 0x040E){
+            if((*code & 0x0E0E) == 0x040E){
                 uint32_t cons = (((uint32_t)(((*code & 0x01F0) >> 3) | (*code & 0x0001))) << 16) | (uint32_t)code[1];
                 subBuffer[*subs] = cons;
                 *subs += 1;
+                fprintf(stderr, "Found CALL instruction at addr 0x%06X\n", pc);
                 return 2;
-            } else if(*code & 0x0E0E == 0x040C){
+            } else if((*code & 0x0E0E) == 0x040C){
+                fprintf(stderr, "Found JMP instruction at addr 0x%06X\n", pc);
                 return 2;
             }
+            break;
         case 0xD000:{
                 int16_t offset = (int16_t)(*code & 0x0FFF);
                 if(offset & 0x0800) offset |= 0xF000;
                 subBuffer[*subs] = pc + offset + 1;
                 *subs += 1;
+                fprintf(stderr, "Found RCALL instruction at addr 0x%06X\n", pc);
+                break;
             }
+        default:
+                break;
     }
     return 1;
 }
@@ -207,7 +199,7 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
     //Two-operand instructions
     else if((*code & 0xC000) == 0x0000){
         int Rd = (*code & 0x01F0) >> 4;
-        int Rr = (*code & 0x000F) + (*code & 0x0200) >> 5;
+        int Rr = ((*code & 0x000F) + (*code & 0x0200)) >> 5;
         switch(*code & 0x3C00){
             case 0x0000: fprintf(stderr, "Two operand\n"); unimplementedInstruction(&opWords, *code); break;
             case 0x0400: printf("CPC    R%1$d, R%2$d\t\t; Compare *R%1$d with *R%2$d, using carry", Rd, Rr); break;
@@ -234,7 +226,7 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
             default:{
           //case 0x3X00:
                 Rd = (Rd & 0x000F) + 16;
-                int K = (*code & 0x0F00) >> 4 + (*code & 0x000F);
+                int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
                 printf("CPI    R%d, %d", Rd, K);
                 break;
             }
@@ -447,7 +439,7 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
     else if((*code & 0xF000) == 0xE000){
         int K = ((*code & 0x0F00) >> 4) | (*code & 0x000F);
         int Rd = ((*code & 0x00F0) >> 4) + 16; //16 <= Rd <= 31
-        printf("LDI    R%1$d, %2$d\t\t; *R%1$d = %2$d", Rd, K);
+        printf("LDI    R%1$d, %2$X\t\t; *R%1$d = %2$d", Rd, K);
     }
     //SBRC/SBRS, BLD/BST
     else if((*code & 0xF808) == 0xF800){
