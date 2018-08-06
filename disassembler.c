@@ -21,8 +21,8 @@ int main(int argc, char** argv){
 
     //Get code from elf file
     uint32_t wordLen = 0;
-    uint16_t *text, *data, *bss;
-    uint16_t *codeBuffer = getBinary(compiledFile, &text, &data, &bss, &wordLen);
+    uint16_t *text, *data, *bss, *rodata;
+    uint16_t *codeBuffer = getBinary(compiledFile, &text, &data, &bss, &rodata, &wordLen);
     fclose(compiledFile);
 
     //Buffer to contain subroutine locations
@@ -40,13 +40,13 @@ int main(int argc, char** argv){
     }
     pc = 0;
     while(pc < wordLen){
-        int incr = disassembleAVROp(codeBuffer, pc, subBuffer, subs, ioMap, mapLen, text, data, bss);
+        int incr = disassembleAVROp(codeBuffer, pc, subBuffer, subs, ioMap, mapLen, text, data, bss, rodata);
         if(incr == 0)
             break;
         pc += incr;
     }
     while(pc < wordLen){
-        int incr = printData(codeBuffer, pc, data, bss);
+        int incr = printData(codeBuffer, pc, data, bss, rodata);
         pc += incr;
     }
     return 0;
@@ -128,18 +128,30 @@ int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer,
                 fprintf(stderr, "Found RCALL instruction at addr 0x%06X\n", pc);
                 break;
             }
+        case 0xF000:{
+                if(*code & 0x0800) break;
+                int8_t offset = (int8_t)((*code & 0x03F8) >> 3);
+                if(offset & 0x40)
+                    offset |= 0x80; //Sign extend offset
+                subBuffer[*subs] = (pc + offset + 1) | 0x80000000;
+                *subs += 1;
+                fprintf(stderr, "Found BRXX instruction at addr 0x%06X\n", pc);
+                break;
+            }
         default:
                 break;
     }
     return 1;
 }
 
-int printData(uint16_t *codeBuffer, uint32_t pc, uint16_t *data, uint16_t *bss){
+int printData(uint16_t *codeBuffer, uint32_t pc, uint16_t *data, uint16_t *bss, uint16_t *rodata){
     uint16_t *word = &codeBuffer[pc];
     if(word == data){
         printf(".data\n");
     } else if(word == bss){
         printf(".bss\n");
+    } else if(word == rodata){
+        printf(".rodata\n");
     }
     printf("%06X          %04X\n", pc, *word);
     return 1;
@@ -148,7 +160,8 @@ int printData(uint16_t *codeBuffer, uint32_t pc, uint16_t *data, uint16_t *bss){
 int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
                      uint32_t *subBuffer, long subs, 
                      char **ioMap, int mapLen, 
-                     uint16_t *addrText, uint16_t *addrData, uint16_t *addrBss){
+                     uint16_t *addrText, uint16_t *addrData,
+                     uint16_t *addrBss, uint16_t *addrROData){
     uint16_t *code = &codeBuffer[pc];
     int opWords = 1;
     if(code == addrText){
@@ -157,12 +170,17 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
         return 0;
     } else if(code == addrBss){
         return 0;
+    } else if(code == addrROData){
+        return 0;
     }
     printf("%06X ", pc);
     char subroutine[10] = "         ";
     for(long i = 0; i < subs; i++){
         if(pc == subBuffer[i]){
             sprintf(subroutine, "sub%04lX: ", i);
+            break;
+        } else if((pc | 0x80000000) == subBuffer[i]){
+            sprintf(subroutine, "bra%04lX: ", i);
             break;
         }
     }
@@ -377,8 +395,19 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
                 //0b0000000k kkkk000k kkkkkkkk kkkkkkkk
                 uint32_t K = (((uint32_t)((*code & 0x01F0) >> 3) | (*code & 0x0001)) << 16) | ((uint32_t)code[1]);
                 switch(*code & 0x0002){
-                    case 0x0000: printf("JMP    0x%06x", K); break;
-                    case 0x0002: printf("CALL   0x%06x", K); break;
+                    case 0x0000: printf("JMP    0x%06X", K); break;
+                    case 0x0002:{
+                        char subName[16];
+                        sprintf(subName, "0x%06X", K);
+                        for(long i = 0; i < subs; i++){
+                            if(K == subBuffer[i]){
+                                sprintf(subName, "sub%04lX", i);
+                                break;
+                            }
+                        }
+                        printf("CALL   %s", subName);
+                        break;
+                    }
                 }
                 opWords = 2;
                 break;
@@ -431,7 +460,19 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
             offset |= 0xF000;
         switch(*code & 0x1000){
             case 0x0000: printf("RJMP   %d", offset); break;
-            case 0x1000: printf("RCALL  %d", offset); break;
+            case 0x1000:{
+                char subName[16];
+                sprintf(subName, "%d", offset);
+                uint32_t subLoc = pc + offset + 1;
+                for(long i = 0; i < subs; i++){
+                    if(subLoc == subBuffer[i]){
+                        sprintf(subName, "sub%04lX", i);
+                        break;
+                    }
+                }
+                printf("RCALL  %s", subName);
+                break;
+            }
         }
     }
     //LDI
@@ -458,23 +499,31 @@ int disassembleAVROp(uint16_t *codeBuffer, uint32_t pc,
         int8_t offset = (int8_t)((*code & 0x03F8) >> 3);
         if(offset & 0x40)
             offset |= 0x80;
+        char branch[16];
+        sprintf(branch, "%d", offset);
+        for(long i = 0; i < subs; i++){
+            if(((pc + offset + 1) | 0x80000000) == subBuffer[i]){
+                sprintf(branch, "bra%04lX", i);
+                break;
+            }
+        }
         switch(*code & 0x0407){
-            case 0x0000: printf("BRCS   %d", offset); break;
-            case 0x0400: printf("BRCC   %d", offset); break;
-            case 0x0001: printf("BREQ   %d", offset); break;
-            case 0x0401: printf("BRNE   %d", offset); break;
-            case 0x0002: printf("BRMI   %d", offset); break;
-            case 0x0402: printf("BRPL   %d", offset); break;
-            case 0x0003: printf("BRVS   %d", offset); break;
-            case 0x0403: printf("BRVC   %d", offset); break;
-            case 0x0004: printf("BRLT   %d", offset); break;
-            case 0x0404: printf("BRGE   %d", offset); break;
-            case 0x0005: printf("BRHS   %d", offset); break;
-            case 0x0405: printf("BRHC   %d", offset); break;
-            case 0x0006: printf("BRTS   %d", offset); break;
-            case 0x0406: printf("BRTC   %d", offset); break;
-            case 0x0007: printf("BRIE   %d", offset); break;
-            case 0x0407: printf("BRID   %d", offset); break;
+            case 0x0000: printf("BRCS   %s\t\t; Branch if carry set", branch); break;
+            case 0x0400: printf("BRCC   %s\t\t; Branch if carry cleared", branch); break;
+            case 0x0001: printf("BREQ   %s\t\t; Branch if zero", branch); break;
+            case 0x0401: printf("BRNE   %s\t\t; Branch if not zero", branch); break;
+            case 0x0002: printf("BRMI   %s\t\t; Branch if result negative", branch); break;
+            case 0x0402: printf("BRPL   %s\t\t; Branch if result positive", branch); break;
+            case 0x0003: printf("BRVS   %s\t\t; Branch if overflow set", branch); break;
+            case 0x0403: printf("BRVC   %s\t\t; Branch if overflow clear", branch); break;
+            case 0x0004: printf("BRLT   %s\t\t; Branch if less than (signed)", branch); break;
+            case 0x0404: printf("BRGE   %s\t\t; Branch if greater than or equal (signed)", branch); break;
+            case 0x0005: printf("BRHS   %s\t\t; Branch if half carry set (BCD)", branch); break;
+            case 0x0405: printf("BRHC   %s\t\t; Branch if half carry cleared (BCD)", branch); break;
+            case 0x0006: printf("BRTS   %s\t\t; Branch if transfer flag set", branch); break;
+            case 0x0406: printf("BRTC   %s\t\t; Branch if transfer flag cleared", branch); break;
+            case 0x0007: printf("BRIE   %s\t\t; Branch if interrupts enabled", branch); break;
+            case 0x0407: printf("BRID   %s\t\t; Branch if interrupts disabled", branch); break;
         }
     }
     //Reserved opcodes
