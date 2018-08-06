@@ -43,7 +43,7 @@ uint16_t *getBinary(FILE* elfFile, uint16_t **text, uint16_t **data, uint16_t **
         binSize += sBss->sh_size;
     }
     uint32_t wordSize = binSize / 2 + binSize % 2;
-    uint16_t *codeBuffer = malloc(wordSize);
+    uint16_t *codeBuffer = malloc(wordSize * sizeof(uint16_t));
     *wordLen = wordSize;
     
     readBinaries(elfFile, codeBuffer, sText, sData, sBss, text, data, bss);
@@ -54,18 +54,16 @@ uint16_t *getBinary(FILE* elfFile, uint16_t **text, uint16_t **data, uint16_t **
 void readBinaries(FILE* elfFile, uint16_t *buffer, 
         Elf32_Shdr *sText, Elf32_Shdr *sData, Elf32_Shdr *sBss,
         uint16_t **text, uint16_t **data, uint16_t **bss){
-    Elf32_Shdr *sections[3];
+    Elf32_Shdr *sections[2];
     sections[0] = sText;
     sections[1] = sData;
-    sections[2] = sBss;
 
-    uint16_t **ptrs[3];
+    uint16_t **ptrs[2];
     ptrs[0] = text;
     ptrs[1] = data;
-    ptrs[2] = bss;
     uint32_t bufferOffset = 0;
     long offset = ftell(elfFile);
-    for(int i = 0; i < 3; i++){
+    for(int i = 0; i < 2; i++){
         if(sections[i] == NULL)
             continue;
         *(ptrs[i]) = &buffer[bufferOffset];
@@ -73,6 +71,10 @@ void readBinaries(FILE* elfFile, uint16_t *buffer,
         bufferOffset += fread(&buffer[bufferOffset], sizeof(uint16_t), 
                 sections[i]->sh_size / sizeof(uint16_t) 
                 + sections[i]->sh_size % sizeof(uint16_t), elfFile);
+    }
+    if(sBss != NULL){
+        *(bss) = &buffer[bufferOffset];
+        memset(*bss, 0, sBss->sh_size);
     }
     fseek(elfFile, offset, SEEK_SET);
 }
