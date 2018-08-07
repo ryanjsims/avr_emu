@@ -1,9 +1,38 @@
-typedef struct AVRState_struct {
-	uint16_t *program;
-    uint8_t  *memory, *registers, *ioRegs, *SRAM;
-	uint32_t progSize, memSize;
-	uint32_t pc;
-} AVRState;
+#include "emulator.h"
+/*
+ * typedef struct AVRState_struct {
+ *	   uint16_t *program;
+ *     uint8_t  *memory, *registers, *ioRegs, *SRAM;
+ *     uint32_t progSize, memSize;
+ *     uint32_t pc;
+ * } AVRState;
+ */
+
+void unimplementedInstruction(char *name, AVRState *state);
+
+int main(int argc, char** argv){
+    if(argc < 2){
+        fprintf(stderr, "Usage: avr_emu <compiled-avr-elf-file>\n");
+        exit(1);
+    }
+    FILE* elfFile = fopen(argv[1], "rb");
+    AVRState *attiny85 = createAVR(elfFile, 8192, 512, 32, 64);
+    
+    return 0;
+}
+
+AVRState *createAVR(FILE* elfFile, int bytesProgMem, int bytesSRAM, int numRegs, int numIO){
+    AVRState *state = malloc(sizeof(AVRState));
+    uint16_t *text, *data, *bss, *rodata;
+    state->program = getBinary(elfFile, &text, &data, &bss, &rodata, &(state->progSize));
+    state->memSize = numRegs + numIO + bytesSRAM;
+    state->memory = calloc(state->memSize, 1);
+    state->registers = state->memory;
+    state->ioRegs = &(state->memory[numRegs]);
+    state->SRAM = &(state->memory[numRegs + numIO]);
+    state->pc = 0;
+    return state;
+}
 
 void unimplementedInstruction(char *name, AVRState *state){
 	fprintf(stderr, "Error: opcode %s (0x%04X) not implemented\n", name, state->memory[state->pc]);
@@ -12,15 +41,23 @@ void unimplementedInstruction(char *name, AVRState *state){
 
 int emulateAVROp(AVRState *state){
 	char name[64];
+    uint16_t *code = &(state->program[state->pc]);
 	//Basic instructions
     if((*code & 0xFC00) == 0x0000){
         switch(*code & 0x0300){
-            case 0x0000: unimplementedInstruction("NOP", state); break;
+            case 0x0000:
+                //NOP
+                break;
             case 0x0100:{
+                //MOVW
                 int Rd = ((*code & 0x00F0) >> 4) * 2;
                 int Rr = (*code & 0x000F) * 2;
-                sprintf(name, "MOVW R%d:R%d, R%d:R%d", Rd + 1, Rd, Rr + 1, Rr);
-				unimplementedInstruction(name, state);
+                //sprintf(name, "MOVW R%d:R%d, R%d:R%d", Rd + 1, Rd, Rr + 1, Rr);
+				//unimplementedInstruction(name, state);
+                uint8_t wordh = state->registers[Rr + 1];
+                uint8_t wordl = state->registers[Rr];
+                state->registers[Rd + 1] = wordh;
+                state->registers[Rd] = wordl;
                 break;
             }
             case 0x0200:{
@@ -130,13 +167,21 @@ int emulateAVROp(AVRState *state){
         int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
         switch(*code & 0x3000){
             case 0x0000: 
-				sprintf("SBCI R%1$d, %2$d", Rd, K);
+				sprintf(name, "SBCI R%1$d, %2$d", Rd, K);
+				unimplementedInstruction(name, state); 
 				break;
             case 0x1000: 
-				sprintf("SUBI R%1$d, %2$d", Rd, K);
+				sprintf(name, "SUBI R%1$d, %2$d", Rd, K);
+				unimplementedInstruction(name, state); 
 				break;
-            case 0x2000: sprintf("ORI R%1$d, %2$d", Rd, K); break;
-            case 0x3000: sprintf("ANDI R%1$d, %2$d\t\t; *R%1$d = *R%1$d & 0x%2$X", Rd, K); break;
+            case 0x2000: 
+                sprintf(name, "ORI R%1$d, %2$d", Rd, K);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x3000: 
+                sprintf(name, "ANDI R%1$d, %2$d", Rd, K);
+				unimplementedInstruction(name, state); 
+                break;
         }
     }
     //LDD/STD
@@ -145,17 +190,41 @@ int emulateAVROp(AVRState *state){
         int K = ((*code & 0x2000) >> 8) + ((*code & 0x0C00) >> 7) + (*code & 0x0007);
         if(K != 0){
             switch(*code & 0x0208){
-                case 0x0000: printf("LDD    R%d, Z + %d", Rd, K); break;
-                case 0x0008: printf("LDD    R%d, Y + %d", Rd, K); break;
-                case 0x0200: printf("STD    Z + %d, R%d", K, Rd); break;
-                case 0x0208: printf("STD    Y + %d, R%d", K, Rd); break;
+                case 0x0000:
+                    sprintf(name, "LDD R%d, Z + %d", Rd, K); 
+				    unimplementedInstruction(name, state); 
+                    break;
+                case 0x0008:
+                    sprintf(name, "LDD R%d, Y + %d", Rd, K);
+				    unimplementedInstruction(name, state); 
+                    break;
+                case 0x0200:
+                    sprintf(name, "STD Z + %d, R%d", K, Rd);
+				    unimplementedInstruction(name, state); 
+                    break;
+                case 0x0208:
+                    sprintf(name, "STD Y + %d, R%d", K, Rd);
+				    unimplementedInstruction(name, state); 
+                    break;
             }
         } else {
             switch(*code & 0x0208){
-                case 0x0000: printf("LD     R%d, Z", Rd); break;
-                case 0x0008: printf("LD     R%d, Y", Rd); break;
-                case 0x0200: printf("ST     Z, R%d", Rd); break;
-                case 0x0208: printf("ST     Y, R%d", Rd); break;
+                case 0x0000:
+                    sprintf(name, "LD R%d, Z", Rd);
+				    unimplementedInstruction(name, state); 
+                    break;
+                case 0x0008:
+                    sprintf(name, "LD R%d, Y", Rd);
+				    unimplementedInstruction(name, state); 
+                    break;
+                case 0x0200:
+                    sprintf(name, "ST Z, R%d", Rd);
+				    unimplementedInstruction(name, state); 
+                    break;
+                case 0x0208:
+                    sprintf(name, "ST Y, R%d", Rd);
+				    unimplementedInstruction(name, state); 
+                    break;
             }
         }
     }
@@ -163,86 +232,271 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xFC00) == 0x9000){
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x020F){
-            case 0x0000: printf("LDS    R%d, 0x%04x", Rd, code[1]); opWords = 2; break;
-            case 0x0200: printf("STS    0x%04x, R%d", code[1], Rd); opWords = 2; break;
-            case 0x0001: printf("LD     R%d, Z+", Rd); break;
-            case 0x0009: printf("LD     R%d, Y+", Rd); break;
-            case 0x0201: printf("ST     Z+, R%d", Rd); break;
-            case 0x0209: printf("ST     Y+, R%d", Rd); break;
-            case 0x0002: printf("LD     R%d, -Z", Rd); break;
-            case 0x000A: printf("LD     R%d, -Y", Rd); break;
-            case 0x0202: printf("ST     -Z, R%d", Rd); break;
-            case 0x020A: printf("ST     -Y, R%d", Rd); break;
-            case 0x0004: printf("LPM    R%d, Z", Rd); break;
-            case 0x0006: printf("ELPM   R%d, Z", Rd); break;
-            case 0x0005: printf("LPM    R%d, Z+", Rd); break;
-            case 0x0007: printf("ELPM   R%d, Z+", Rd); break;
-            case 0x0204: printf("XCH    Z, R%d", Rd); break;
-            case 0x0205: printf("LAS    Z, R%d", Rd); break;
-            case 0x0206: printf("LAC    Z, R%d", Rd); break;
-            case 0x0207: printf("LAT    Z, R%d", Rd); break;
-            case 0x000C: printf("LD     R%d, X", Rd); break;
-            case 0x020C: printf("ST     X, R%d", Rd); break;
-            case 0x000D: printf("LD     R%d, X+", Rd); break;
-            case 0x020D: printf("ST     X+, R%d", Rd); break;
-            case 0x000E: printf("LD     R%d, -X", Rd); break;
-            case 0x020E: printf("ST     -X, R%d", Rd); break;
-            case 0x000F: printf("POP    R%d", Rd); break;
-            case 0x020F: printf("PUSH   R%d", Rd); break;
-            default: fprintf(stderr, "Load/Store\n"); unimplementedInstruction(&opWords, *code); break;
+            case 0x0000:
+                sprintf(name, "LDS R%d, 0x%04x", Rd, code[1]);
+				unimplementedInstruction(name, state); 
+                opWords = 2;
+                break;
+            case 0x0200:
+                sprintf(name, "STS 0x%04x, R%d", code[1], Rd);
+				unimplementedInstruction(name, state); 
+                opWords = 2;
+                break;
+            case 0x0001:
+                sprintf(name, "LD R%d, Z+", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0009:
+                sprintf(name, "LD R%d, Y+", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0201:
+                sprintf(name, "ST Z+, R%d", Rd); 
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0209:
+                sprintf(name, "ST Y+, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0002:
+                sprintf(name, "LD R%d, -Z", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x000A:
+                sprintf(name, "LD R%d, -Y", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0202:
+                sprintf(name, "ST -Z, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x020A:
+                sprintf(name, "ST -Y, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0004:
+                sprintf(name, "LPM R%d, Z", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0006:
+                sprintf(name, "ELPM R%d, Z", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0005:
+                sprintf(name, "LPM R%d, Z+", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0007:
+                sprintf(name, "ELPM R%d, Z+", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0204:
+                sprintf(name, "XCH Z, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0205:
+                sprintf(name, "LAS Z, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0206:
+                sprintf(name, "LAC Z, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x0207:
+                sprintf(name, "LAT Z, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x000C:
+                sprintf(name, "LD R%d, X", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x020C:
+                sprintf(name, "ST X, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x000D:
+                sprintf(name, "LD R%d, X+", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x020D:
+                sprintf(name, "ST X+, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x000E:
+                sprintf(name, "LD R%d, -X", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x020E:
+                sprintf(name, "ST -X, R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x000F:
+                sprintf(name, "POP R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            case 0x020F:
+                sprintf(name, "PUSH R%d", Rd);
+				unimplementedInstruction(name, state); 
+                break;
+            default:
+                sprintf(name, "LD/ST reserved");
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //Zero-operand instructions
     else if((*code & 0xFF0F) == 0x9508){
         switch(*code & 0x00F0){
-            case 0x0000: printf("RET");  break;
-            case 0x0010: printf("RETI"); break; //Return from interrupt - Sets I bit in SREG
+            case 0x0000:
+                sprintf(name, "RET");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0010:
+                sprintf(name, "RETI");
+                unimplementedInstruction(name, state);
+                break; //Return from interrupt - Sets I bit in SREG
             //0x0020 - 0x0070: reserved
-            case 0x0080: printf("SLEEP"); break;
-            case 0x0090: printf("BREAK"); break;
-            case 0x00A0: printf("WDR"); break;
+            case 0x0080:
+                sprintf(name, "SLEEP");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0090:
+                sprintf(name, "BREAK");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00A0:
+                sprintf(name, "WDR");
+                unimplementedInstruction(name, state);
+                break;
             //0x00B0: reserved
-            case 0x00C0: printf("LPM"); break;
-            case 0x00D0: printf("ELPM"); break;
-            case 0x00E0: printf("SPM"); break;
-            case 0x00F0: printf("SPM    Z+"); break;
-            default: fprintf(stderr, "Zero operand\n"); unimplementedInstruction(&opWords, *code); break;
+            case 0x00C0:
+                sprintf(name, "LPM");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00D0:
+                sprintf(name, "ELPM");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00E0:
+                sprintf(name, "SPM");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00F0:
+                sprintf(name, "SPM Z+");
+                unimplementedInstruction(name, state);
+                break;
+            default: 
+                sprintf(name, "Zero Operand");
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //One-operand instructions
     else if((*code & 0xFE08) == 0x9400){
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x0007){
-            case 0x0000: printf("COM    R%1$d\t\t\t; *R%1$d = ~*R%1$d", Rd); break;
-            case 0x0001: printf("NEG    R%1$d\t\t\t; *R%1$d = -*R%1$d", Rd); break;
-            case 0x0002: printf("SWAP   R%1$d\t\t\t; *R%1$d = (*R%1$d & 0xF0 >> 4) | (*R%1$d & 0x0F << 4)", Rd); break;
-            case 0x0003: printf("INC    R%1$d\t\t\t; *R%1$d += 1", Rd); break;
-            case 0x0004: fprintf(stderr, "One operand\n"); unimplementedInstruction(&opWords, *code); break;
-            case 0x0005: printf("ASR    R%1$d\t\t\t; *R%1$d = (*R%1$d >> 1) | (*R%1$d & 0x80)", Rd); break;
-            case 0x0006: printf("LSR    R%1$d\t\t\t; *R%1$d >>= 1", Rd); break;
-            case 0x0007: printf("ROR    R%1$d\t\t\t; *R%1$d = (*R%1$d >> 1) | 0bC0000000", Rd); break;
+            case 0x0000: 
+                sprintf(name, "COM R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0001:
+                sprintf(name, "NEG R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0002:
+                sprintf(name, "SWAP R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0003:
+                sprintf(name, "INC R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0004:
+                sprintf(name, "One operand");
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0005:
+                sprintf(name, "ASR R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0006:
+                sprintf(name, "LSR R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0007:
+                sprintf(name, "ROR R%1$d", Rd);
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //SE*/CL*: * in {C, Z, N, V, S, H, T, I}
     //Set/clear flags
     else if((*code & 0xFF0F) == 0x9408){
         switch(*code & 0x00F0){
-            case 0x0000: printf("SEC"); break;
-            case 0x0010: printf("SEZ"); break;
-            case 0x0020: printf("SEN"); break;
-            case 0x0030: printf("SEV"); break;
-            case 0x0040: printf("SES"); break;
-            case 0x0050: printf("SEH"); break;
-            case 0x0060: printf("SET"); break;
-            case 0x0070: printf("SEI"); break;
-            case 0x0080: printf("CLC"); break;
-            case 0x0090: printf("CLZ"); break;
-            case 0x00A0: printf("CLN"); break;
-            case 0x00B0: printf("CLV"); break;
-            case 0x00C0: printf("CLS"); break;
-            case 0x00D0: printf("CLH"); break;
-            case 0x00E0: printf("CLT"); break;
-            case 0x00F0: printf("CLI"); break;
+            case 0x0000: 
+                sprintf(name, "SEC"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0010: 
+                sprintf(name, "SEZ"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0020: 
+                sprintf(name, "SEN"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0030: 
+                sprintf(name, "SEV"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0040: 
+                sprintf(name, "SES"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0050: 
+                sprintf(name, "SEH"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0060: 
+                sprintf(name, "SET"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0070: 
+                sprintf(name, "SEI"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0080: 
+                sprintf(name, "CLC"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0090: 
+                sprintf(name, "CLZ"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00A0: 
+                sprintf(name, "CLN"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00B0: 
+                sprintf(name, "CLV"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00C0: 
+                sprintf(name, "CLS"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00D0: 
+                sprintf(name, "CLH"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00E0: 
+                sprintf(name, "CLT"); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x00F0: 
+                sprintf(name, "CLI"); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //EIJMP, IJMP, EICALL, ICALL, DEC, DES, JMP, CALL
@@ -251,20 +505,34 @@ int emulateAVROp(AVRState *state){
             //SE*/CL* block catches 0x0000 case
             case 0x0001:
                 switch(*code & 0x0110){
-                    case 0x0000: printf("IJMP"); break;
-                    case 0x0010: printf("EIJMP"); break;
-                    case 0x0100: printf("ICALL"); break;
-                    case 0x0110: printf("EICALL"); break;
+                    case 0x0000: 
+                        sprintf(name, "IJMP"); 
+                        unimplementedInstruction(name, state);
+                        break;
+                    case 0x0010: 
+                        sprintf(name, "EIJMP"); 
+                        unimplementedInstruction(name, state);
+                        break;
+                    case 0x0100: 
+                        sprintf(name, "ICALL"); 
+                        unimplementedInstruction(name, state);
+                        break;
+                    case 0x0110: 
+                        sprintf(name, "EICALL"); 
+                        unimplementedInstruction(name, state);
+                        break;
                 }
                 break;
             case 0x0002:{
                 int Rd = (*code & 0x01F0) >> 4;
-                printf("DEC    R%d", Rd);
+                sprintf(name, "DEC R%d", Rd);
+                unimplementedInstruction(name, state);
                 break;
             }
             case 0x0003:{
                 int K = (*code & 0x00F0) >> 4;
-                printf("DES    0x%1x", K);
+                sprintf(name, "DES 0x%1x", K);
+                unimplementedInstruction(name, state);
                 break;
             }
             default:{
@@ -273,8 +541,14 @@ int emulateAVROp(AVRState *state){
                 //0b0000000k kkkk000k kkkkkkkk kkkkkkkk
                 uint32_t K = (((uint32_t)((*code & 0x01F0) >> 3) | (*code & 0x0001)) << 16) | ((uint32_t)code[1]);
                 switch(*code & 0x0002){
-                    case 0x0000: printf("JMP    0x%06x", K); break;
-                    case 0x0002: printf("CALL   0x%06x", K); break;
+                    case 0x0000: 
+                        sprintf(name, "JMP 0x%06x", K); 
+                        unimplementedInstruction(name, state);
+                        break;
+                    case 0x0002: 
+                        sprintf(name, "CALL 0x%06x", K); 
+                        unimplementedInstruction(name, state);
+                        break;
                 }
                 opWords = 2;
                 break;
@@ -286,8 +560,14 @@ int emulateAVROp(AVRState *state){
         int k = ((*code & 0x00C0) >> 2) | (*code & 0x000F);
         int Rp = ((*code & 0x0030) >> 4) * 2 + 24; //Rp in (24, 26, 28, 30}
         switch(*code & 0x0100){
-            case 0x0000: printf("ADIW   R%d, %d", Rp, k); break;
-            case 0x0100: printf("SBIW   R%d, %d", Rp, k); break;
+            case 0x0000: 
+                sprintf(name, "ADIW R%d, %d", Rp, k); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0100: 
+                sprintf(name, "SBIW R%d, %d", Rp, k); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //CBI, SBI, SBIC, SBIS
@@ -296,10 +576,22 @@ int emulateAVROp(AVRState *state){
         int Ra = (*code & 0x00F8) >> 3;
         int bit = (*code & 0x0007);
         switch(*code & 0x0300){
-            case 0x0000: printf("CBI    %s, %d", ioMap[Ra], bit); break;
-            case 0x0200: printf("SBI    %s, %d", ioMap[Ra], bit); break;
-            case 0x0100: printf("SBIC   %s, %d", ioMap[Ra], bit); break;
-            case 0x0300: printf("SBIS   %s, %d", ioMap[Ra], bit); break;
+            case 0x0000: 
+                sprintf(name, "CBI %s, %d", ioMap[Ra], bit); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0200: 
+                sprintf(name, "SBI %s, %d", ioMap[Ra], bit); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0100: 
+                sprintf(name, "SBIC %s, %d", ioMap[Ra], bit); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0300: 
+                sprintf(name, "SBIS %s, %d", ioMap[Ra], bit); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //MUL (Unsigned)
@@ -307,7 +599,8 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xFC00) == 0x9C00){
         int Rd = (*code & 0x01F0) >> 4;
         int Rr = ((*code & 0x0200) >> 5) | (*code & 0x000F);
-        printf("MUL    R%d, R%d", Rd, Rr);
+        sprintf(name, "MUL R%d, R%d", Rd, Rr);
+        unimplementedInstruction(name, state);
     }
     //IN/OUT to I/O space
     //Read/Write to the 64 IO registers (memory addresses 0x20 - 0x5F)
@@ -315,8 +608,14 @@ int emulateAVROp(AVRState *state){
         int Rio = ((*code & 0x0600) >> 5) | (*code & 0x000F);
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x0800){
-            case 0x0000: printf("IN     R%d, %s", Rd, ioMap[Rio]); break;
-            case 0x0800: printf("OUT    %s, R%d", ioMap[Rio], Rd); break;
+            case 0x0000: 
+                sprintf(name, "IN R%d, %s", Rd, ioMap[Rio]); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0800: 
+                sprintf(name, "OUT %s, R%d", ioMap[Rio], Rd); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //RJMP/RCALL to PC + signed 12 bit immediate value
@@ -326,8 +625,14 @@ int emulateAVROp(AVRState *state){
         if(offset & 0x0800)
             offset |= 0xF000;
         switch(*code & 0x1000){
-            case 0x0000: printf("RJMP   %d", offset); break;
-            case 0x1000: printf("RCALL  %d", offset); break;
+            case 0x0000: 
+                sprintf(name, "RJMP %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x1000: 
+                sprintf(name, "RCALL %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //LDI
@@ -335,17 +640,30 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xF000) == 0xE000){
         int K = ((*code & 0x0F00) >> 4) | (*code & 0x000F);
         int Rd = ((*code & 0x00F0) >> 4) + 16; //16 <= Rd <= 31
-        printf("LDI    R%1$d, %2$X\t\t; *R%1$d = %2$d", Rd, K);
+        sprintf(name, "LDI R%1$d, %2$X", Rd, K);
+        unimplementedInstruction(name, state);
     }
     //SBRC/SBRS, BLD/BST
     else if((*code & 0xF808) == 0xF800){
         int Rd = (*code & 0x01F0) >> 4;
         int bit = (*code & 0x0007);
         switch(*code & 0x0600){
-            case 0x0000: printf("BLD    R%1$d, %2$d\t\t; Set bit %2$d of R%1$d to T from SREG", Rd, bit); break;
-            case 0x0200: printf("BST    R%1$d, %2$d\t\t; Set SREG T bit to bit %2$d from R%1$d", Rd, bit); break;
-            case 0x0400: printf("SBRC   R%1$d, %2$d\t\t; if(!(*R%1$d & 0x%3$02X)) skip next", Rd, bit, 1 << bit); break;
-            case 0x0600: printf("SBRS   R%1$d, %2$d\t\t; if(*R%1$d & 0x%3$02X) skip next", Rd, bit, 1 << bit); break;
+            case 0x0000: 
+                sprintf(name, "BLD R%1$d, %2$d", Rd, bit); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0200: 
+                sprintf(name, "BST R%1$d, %2$d", Rd, bit); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0400: 
+                sprintf(name, "SBRC R%1$d, %2$d", Rd, bit, 1 << bit); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0600: 
+                sprintf(name, "SBRS R%1$d, %2$d", Rd, bit, 1 << bit); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //Conditional branches
@@ -355,29 +673,76 @@ int emulateAVROp(AVRState *state){
         if(offset & 0x40)
             offset |= 0x80;
         switch(*code & 0x0407){
-            case 0x0000: printf("BRCS   %d", offset); break;
-            case 0x0400: printf("BRCC   %d", offset); break;
-            case 0x0001: printf("BREQ   %d", offset); break;
-            case 0x0401: printf("BRNE   %d", offset); break;
-            case 0x0002: printf("BRMI   %d", offset); break;
-            case 0x0402: printf("BRPL   %d", offset); break;
-            case 0x0003: printf("BRVS   %d", offset); break;
-            case 0x0403: printf("BRVC   %d", offset); break;
-            case 0x0004: printf("BRLT   %d", offset); break;
-            case 0x0404: printf("BRGE   %d", offset); break;
-            case 0x0005: printf("BRHS   %d", offset); break;
-            case 0x0405: printf("BRHC   %d", offset); break;
-            case 0x0006: printf("BRTS   %d", offset); break;
-            case 0x0406: printf("BRTC   %d", offset); break;
-            case 0x0007: printf("BRIE   %d", offset); break;
-            case 0x0407: printf("BRID   %d", offset); break;
+            case 0x0000: 
+                sprintf(name, "BRCS %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0400: 
+                sprintf(name, "BRCC %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0001: 
+                sprintf(name, "BREQ %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0401: 
+                sprintf(name, "BRNE %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0002: 
+                sprintf(name, "BRMI %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0402: 
+                sprintf(name, "BRPL %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0003: 
+                sprintf(name, "BRVS %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0403: 
+                sprintf(name, "BRVC %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0004: 
+                sprintf(name, "BRLT %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0404: 
+                sprintf(name, "BRGE %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0005: 
+                sprintf(name, "BRHS %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0405: 
+                sprintf(name, "BRHC %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0006: 
+                sprintf(name, "BRTS %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0406: 
+                sprintf(name, "BRTC %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0007: 
+                sprintf(name, "BRIE %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
+            case 0x0407: 
+                sprintf(name, "BRID %d", offset); 
+                unimplementedInstruction(name, state);
+                break;
         }
     }
     //Reserved opcodes
     else{
-        fprintf(stderr, "else\n");
-        unimplementedInstruction(&opWords, *code);
+        sprintf(name, "Reserved");
+        unimplementedInstruction(name, state);
     }
-    printf("\n");
     return opWords;
 }
