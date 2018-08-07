@@ -64,7 +64,7 @@ void unimplementedInstruction(int *opWords, uint16_t opCode){
     //*opWords = 0;
 }
 
-char **buildIORegMap(FILE *ioMapFile, int *mapLen){
+/*char **buildIORegMap(FILE *ioMapFile, int *mapLen){
     *mapLen = 64;
     char **toReturn = malloc(*mapLen * sizeof(char*));
     int i = 0;
@@ -142,7 +142,7 @@ int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer,
                 break;
     }
     return 1;
-}
+}*/
 
 int printData(uint16_t *codeBuffer, uint32_t pc, uint16_t *data, uint16_t *bss, uint16_t *rodata){
     uint16_t *word = &codeBuffer[pc];
