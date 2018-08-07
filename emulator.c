@@ -13,9 +13,10 @@ void unimplementedInstruction(char *name, AVRState *state);
 
 int main(int argc, char** argv){
     if(argc < 2){
-        fprintf(stderr, "Usage: avr_emu <compiled-avr-elf-file>\n");
+        fprintf(stderr, "Usage: avr_emu <compiled-avr-elf-file> [-i IOMapFile]\n");
         exit(1);
     }
+    //TODO: Add IOMap support
     FILE* elfFile = fopen(argv[1], "rb");
     AVRState *attiny85 = createAVR(elfFile, 8192, 512, 32, 64);
     
