@@ -1,27 +1,55 @@
-    //Basic instructions
+typedef struct AVRState_struct {
+	uint16_t *program;
+    uint8_t  *memory, *registers, *ioRegs, *SRAM;
+	uint32_t progSize, memSize;
+	uint32_t pc;
+} AVRState;
+
+void unimplementedInstruction(char *name, AVRState *state){
+	fprintf(stderr, "Error: opcode %s (0x%04X) not implemented\n", name, state->memory[state->pc]);
+	exit(1);
+}
+
+int emulateAVROp(AVRState *state){
+	char name[64];
+	//Basic instructions
     if((*code & 0xFC00) == 0x0000){
         switch(*code & 0x0300){
-            case 0x0000: printf("NOP"); break;
+            case 0x0000: unimplementedInstruction("NOP", state); break;
             case 0x0100:{
                 int Rd = ((*code & 0x00F0) >> 4) * 2;
                 int Rr = (*code & 0x000F) * 2;
-                printf("MOVW   R%d:R%d, R%d:R%d", Rd + 1, Rd, Rr + 1, Rr);
+                sprintf(name, "MOVW R%d:R%d, R%d:R%d", Rd + 1, Rd, Rr + 1, Rr);
+				unimplementedInstruction(name, state);
                 break;
             }
             case 0x0200:{
                 int Rd = ((*code & 0x00F0) >> 4) + 16;
                 int Rr = (*code & 0x000F) + 16;
-                printf("MULS   R%d, R%d", Rd, Rr);
+                sprintf(name, "MULS R%d, R%d", Rd, Rr);
+				unimplementedInstruction(name, state);
                 break;
             }
             case 0x0300:{
                 int Rd = ((*code & 0x0070) >> 4) + 16;
                 int Rr = (*code & 0x0007) + 16;
                 switch(*code & 0x0088){
-                    case 0x0000: printf("MULSU  R%d, R%d", Rd, Rr); break;
-                    case 0x0008: printf("FMUL   R%d, R%d", Rd, Rr); break;
-                    case 0x0080: printf("FMULS  R%d, R%d", Rd, Rr); break;
-                    case 0x0088: printf("FMULSU R%d, R%d", Rd, Rr); break;
+                    case 0x0000: 
+						sprintf(name, "MULSU R%d, R%d", Rd, Rr); 
+						unimplementedInstruction(name, state);
+						break;
+                    case 0x0008:
+						sprintf(name, "FMUL R%d, R%d", Rd, Rr);
+						unimplementedInstruction(name, state);
+						break;
+                    case 0x0080:
+						sprintf(name, "FMULS R%d, R%d", Rd, Rr);
+						unimplementedInstruction(name, state);
+						break;
+                    case 0x0088:
+						sprintf(name, "FMULSU R%d, R%d", Rd, Rr);
+						unimplementedInstruction(name, state);
+						break;
                 }
                 break;
             }
@@ -32,33 +60,66 @@
         int Rd = (*code & 0x01F0) >> 4;
         int Rr = ((*code & 0x000F) + (*code & 0x0200)) >> 5;
         switch(*code & 0x3C00){
-            case 0x0000: fprintf(stderr, "Two operand\n"); unimplementedInstruction(&opWords, *code); break;
-            case 0x0400: printf("CPC    R%1$d, R%2$d\t\t; Compare *R%1$d with *R%2$d, using carry", Rd, Rr); break;
-            case 0x1400: printf("CP     R%1$d, R%2$d\t\t; Compare *R%1$d with *R%2$d", Rd, Rr); break;
-            case 0x0800: printf("SBC    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d - *R%2$d - C", Rd, Rr); break;
-            case 0x1800: printf("SUB    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d - *R%2$d", Rd, Rr); break;
+            case 0x0000: 
+				sprintf(name, "Reserved"); 
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x0400: 
+				sprintf(name, "CPC R%1$d, R%2$d", Rd, Rr); 
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x1400: 
+				sprintf(name, "CP R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x0800: 
+				sprintf(name, "SBC R%1$d, R%2$d", Rd, Rr); 
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x1800: 
+				sprintf(name, "SUB R%1$d, R%2$d", Rd, Rr);	
+				unimplementedInstruction(name, state); 
+				break;
             case 0x0C00:
                 if(Rd == Rr)
-                    printf("LSL    R%1$d\t\t\t; *R%1$d <<= 1", Rd);
+                    sprintf(name, "LSL R%1$d", Rd);
                 else
-                    printf("ADD    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d + *R%2$d", Rd, Rr);
+                    sprintf(name, "ADD R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
                 break;
             case 0x1C00:
                 if(Rd == Rr)
-                    printf("ROL    R%1$d\t\t\t; *R%1$d = (*R%1$d << 1) | 0b0000000C", Rd);
+                    sprintf("ROL R%1$d", Rd);
                 else
-                    printf("ADC    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d + *R%2$d + C", Rd, Rr);
+                    sprintf("ADC R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
                 break;
-            case 0x1000: printf("CPSE   R%1$d, R%2$d\t\t; if(*R%1$d == *R%2$d) skip next", Rd, Rr); break;
-            case 0x2000: printf("AND    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d & *R%2$d", Rd, Rr); break;
-            case 0x2400: printf("EOR    R%1$d, R%2$d\t\t; *R%1$d = *R%1$d ^ *R%2$d", Rd, Rr); break;
-            case 0x2800: printf("OR     R%1$d, R%2$d\t\t; *R%1$d = *R%1$d | *R%2$d", Rd, Rr); break;
-            case 0x2C00: printf("MOV    R%1$d, R%2$d\t\t; *R%1$d = *R%2$d", Rd, Rr); break;
+            case 0x1000: 
+				sprintf(name, "CPSE R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x2000: 
+				sprintf(name, "AND R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x2400: 
+				sprintf(name, "EOR R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x2800: 
+				sprintf(name, "OR R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
+				break;
+            case 0x2C00: 
+				sprintf(name, "MOV R%1$d, R%2$d", Rd, Rr);
+				unimplementedInstruction(name, state); 
+				break;
             default:{
           //case 0x3X00:
                 Rd = (Rd & 0x000F) + 16;
                 int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
-                printf("CPI    R%d, %d", Rd, K);
+                sprintf(name, "CPI R%d, %d", Rd, K);
+				unimplementedInstruction(name, state); 
                 break;
             }
         }
@@ -68,10 +129,14 @@
         int Rd = ((*code & 0x00F0) >> 4) + 16;
         int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
         switch(*code & 0x3000){
-            case 0x0000: printf("SBCI   R%1$d, %2$d\t\t; *R%1$d = *R%1$d - %2$d - C", Rd, K); break;
-            case 0x1000: printf("SUBI   R%1$d, %2$d\t\t; *R%1$d = *R%1$d - %2$d", Rd, K); break;
-            case 0x2000: printf("ORI    R%1$d, %2$d\t\t; *R%1$d = *R%1$d | 0x%2$X", Rd, K); break;
-            case 0x3000: printf("ANDI   R%1$d, %2$d\t\t; *R%1$d = *R%1$d & 0x%2$X", Rd, K); break;
+            case 0x0000: 
+				sprintf("SBCI R%1$d, %2$d", Rd, K);
+				break;
+            case 0x1000: 
+				sprintf("SUBI R%1$d, %2$d", Rd, K);
+				break;
+            case 0x2000: sprintf("ORI R%1$d, %2$d", Rd, K); break;
+            case 0x3000: sprintf("ANDI R%1$d, %2$d\t\t; *R%1$d = *R%1$d & 0x%2$X", Rd, K); break;
         }
     }
     //LDD/STD
