@@ -3,7 +3,7 @@
  * typedef struct AVRState_struct {
  *	   uint16_t *program;
  *     uint8_t  *memory, *registers, *ioRegs, *SRAM;
- *     uint8_t  *SREG, *SPH, *SPL, *RAMPX, *RAMPY, *EIND;
+ *     uint8_t  *SREG, *SPH, *SPL, *RAMPX, *RAMPY, *RAMPZ, *RAMPD, *EIND;
  *     uint32_t progSize, memSize;
  *     uint32_t pc;
  * } AVRState;
@@ -11,19 +11,67 @@
 
 void unimplementedInstruction(char *name, AVRState *state);
 
+uint8_t calcSREG(AVRState *state, uint8_t Rd, uint8_t Rr, uint8_t result){
+    uint8_t newSREG = *(state->SREG);
+    if(result != 0){
+        newSREG &= ~Z;
+    } else {
+        newSREG |= Z;
+    }
+    if(result > 0xFF){
+        newSREG |= C;
+    } else {
+        newSREG &= ~C;
+    }
+    if(result & 0x80){
+        newSREG |= N;
+    } else {
+        newSREG &= ~N;
+    }
+    if((state->registers[Rd] & ~state->registers[Rr] & ~result & 0x80) |
+            (~state->registers[Rd] & state->registers[Rr] & result & 0x80)){
+        newSREG |= V;
+    } else {
+        newSREG &= ~V;
+    }
+    if((newSREG & N) ^ (newSREG & V)){
+        newSREG |= S;
+    } else {
+        newSREG &= ~S;
+    }
+    if(((~state->registers[Rd] & state->registers[Rr]) |
+            (state->registers[Rr] & result) |
+            (result & ~state->registers[Rd])) & 0x08){
+        newSREG |= H;
+    } else {
+        newSREG &= ~H;
+    }
+}
+
 int main(int argc, char** argv){
     if(argc < 2){
         fprintf(stderr, "Usage: avr_emu <compiled-avr-elf-file> [-i IOMapFile]\n");
         exit(1);
     }
-    //TODO: Add IOMap support
+    FILE* mapFile = NULL;
+    for(int i = 0; i < argc - 1; i++){
+        if(strcmp(argv[i], "-i") == 0){
+            mapFile = fopen(argv[i+1], "r");
+            break;
+        }
+    }
+    int ioMapLen = 0;
+    char **ioMap = buildIORegMap(mapFile, &ioMapLen);
     FILE* elfFile = fopen(argv[1], "rb");
-    AVRState *attiny85 = createAVR(elfFile, 8192, 512, 32, 64);
+    AVRState *attiny85 = createAVR(elfFile, 8192, 512, 32, 64, ioMap, ioMapLen);
     
     return 0;
 }
 
-AVRState *createAVR(FILE* elfFile, int bytesProgMem, int bytesSRAM, int numRegs, int numIO){
+AVRState *createAVR(FILE* elfFile, 
+        int bytesProgMem, int bytesSRAM, 
+        int numRegs, int numIO, 
+        char **ioMap, int ioMapLen){
     AVRState *state = malloc(sizeof(AVRState));
     uint16_t *text, *data, *bss, *rodata;
     state->program = getBinary(elfFile, &text, &data, &bss, &rodata, &(state->progSize));
@@ -33,6 +81,25 @@ AVRState *createAVR(FILE* elfFile, int bytesProgMem, int bytesSRAM, int numRegs,
     state->ioRegs = &(state->memory[numRegs]);
     state->SRAM = &(state->memory[numRegs + numIO]);
     state->pc = 0;
+    for(int i = 0; i < ioMapLen; i++){
+        if(strcmp(ioMap[i], "SREG") == 0){
+            state->SREG = &(state->ioRegs[i]);
+        } else if(strcmp(ioMap[i], "SPH") == 0){
+            state->SPH = &(state->ioRegs[i]);
+        } else if(strcmp(ioMap[i], "SPL") == 0){
+            state->SPL = &(state->ioRegs[i]);
+        } else if(strcmp(ioMap[i], "RAMPX") == 0){
+            state->RAMPX = &(state->ioRegs[i]);
+        } else if(strcmp(ioMap[i], "RAMPY") == 0){
+            state->RAMPY = &(state->ioRegs[i]);   
+        } else if(strcmp(ioMap[i], "RAMPZ") == 0){
+            state->RAMPZ = &(state->ioRegs[i]);
+        } else if(strcmp(ioMap[i], "RAMPD") == 0){
+            state->RAMPD = &(state->ioRegs[i]);
+        } else if(strcmp(ioMap[i], "EIND") == 0){
+            state->EIND = &(state->ioRegs[i]);
+        }
+    }
     return state;
 }
 
@@ -44,6 +111,7 @@ void unimplementedInstruction(char *name, AVRState *state){
 int emulateAVROp(AVRState *state){
 	char name[64];
     uint16_t *code = &(state->program[state->pc]);
+    int incr = 1;
 	//Basic instructions
     if((*code & 0xFC00) == 0x0000){
         switch(*code & 0x0300){
@@ -98,6 +166,8 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xC000) == 0x0000){
         int Rd = (*code & 0x01F0) >> 4;
         int Rr = ((*code & 0x000F) + (*code & 0x0200)) >> 5;
+        uint16_t result;
+        uint8_t newSREG;
         switch(*code & 0x3C00){
             case 0x0000: 
 				sprintf(name, "Reserved"); 
@@ -105,8 +175,10 @@ int emulateAVROp(AVRState *state){
 				break;
             case 0x0400: 
 				sprintf(name, "CPC R%1$d, R%2$d", Rd, Rr); 
-				unimplementedInstruction(name, state); 
-				break;
+                unimplementedInstruction(name, state);
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)(state->registers[Rr]);
+				result -= (*(state->SREG) & C) ? 1 : 0;
+                break;
             case 0x1400: 
 				sprintf(name, "CP R%1$d, R%2$d", Rd, Rr);
 				unimplementedInstruction(name, state); 
@@ -746,5 +818,5 @@ int emulateAVROp(AVRState *state){
         sprintf(name, "Reserved");
         unimplementedInstruction(name, state);
     }
-    return opWords;
+    return incr;
 }
