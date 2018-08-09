@@ -11,41 +11,47 @@
 
 void unimplementedInstruction(char *name, AVRState *state);
 
-uint8_t calcSREG(AVRState *state, uint8_t Rd, uint8_t Rr, uint8_t result){
+uint8_t arithSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result){
     uint8_t newSREG = *(state->SREG);
     if(result != 0){
         newSREG &= ~Z;
     } else {
         newSREG |= Z;
     }
+
     if(result > 0xFF){
         newSREG |= C;
     } else {
         newSREG &= ~C;
     }
+
     if(result & 0x80){
         newSREG |= N;
     } else {
         newSREG &= ~N;
     }
-    if((state->registers[Rd] & ~state->registers[Rr] & ~result & 0x80) |
-            (~state->registers[Rd] & state->registers[Rr] & result & 0x80)){
+
+    if((valRd & ~valRr & ~result & 0x80) |
+            (~valRd & valRr & result & 0x80)){
         newSREG |= V;
     } else {
         newSREG &= ~V;
     }
+
     if((newSREG & N) ^ (newSREG & V)){
         newSREG |= S;
     } else {
         newSREG &= ~S;
     }
-    if(((~state->registers[Rd] & state->registers[Rr]) |
-            (state->registers[Rr] & result) |
-            (result & ~state->registers[Rd])) & 0x08){
+
+    if(((~valRd & valRr) |
+            (valRr & result) |
+            (result & ~valRd)) & 0x08){
         newSREG |= H;
     } else {
         newSREG &= ~H;
     }
+    return newSREG;
 }
 
 int main(int argc, char** argv){
@@ -178,6 +184,12 @@ int emulateAVROp(AVRState *state){
                 unimplementedInstruction(name, state);
                 result = (uint16_t)(state->registers[Rd]) - (uint16_t)(state->registers[Rr]);
 				result -= (*(state->SREG) & C) ? 1 : 0;
+                newSREG = arithSREG(state, state->registers[Rd], state->registers[Rr], result);
+                if(result == 0){
+                    *(state->SREG) = newSREG;
+                } else {
+                    //TODO: Finish this!
+                }
                 break;
             case 0x1400: 
 				sprintf(name, "CP R%1$d, R%2$d", Rd, Rr);
