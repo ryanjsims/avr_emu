@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
-#include "avr-elf-utils.h"
+#include "avr-elf-util.h"
 #include "avr-utils.h"
 
 #define C 0b00000001

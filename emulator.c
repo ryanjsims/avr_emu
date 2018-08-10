@@ -10,6 +10,7 @@
  */
 
 void unimplementedInstruction(char *name, AVRState *state);
+void dumpRegisters(AVRState *state);
 
 uint8_t arithSubSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
 uint8_t arithAddSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
@@ -31,7 +32,11 @@ int main(int argc, char** argv){
     char **ioMap = buildIORegMap(mapFile, &ioMapLen);
     FILE* elfFile = fopen(argv[1], "rb");
     AVRState *attiny85 = createAVR(elfFile, 8192, 512, 32, 64, ioMap, ioMapLen);
-    
+    int incr;
+    while(1){
+        incr = emulateAVROp(attiny85);
+        attiny85->pc += incr;
+    }
     return 0;
 }
 
@@ -184,8 +189,26 @@ uint8_t logicSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result
 }
 
 void unimplementedInstruction(char *name, AVRState *state){
-	fprintf(stderr, "Error: opcode %s (0x%04X) not implemented\n", name, state->memory[state->pc]);
+	fprintf(stderr, "Error: opcode %s (@ 0x%04X) not implemented\n", name, state->pc);
+    dumpRegisters(state);
 	exit(1);
+}
+
+void dumpRegisters(AVRState *state){
+    fprintf(stderr, "Registers:\n");
+    fprintf(stderr, "SREG: 0b");
+    for(int i = 0; i < 8; i++){
+        fprintf(stderr, "%d", (*(state->SREG) & 0x80 >> i) ? 1 : 0);
+    }
+    fprintf(stderr, "\nSPH: 0x%02X\nSPL: 0x%02X\n", *state->SPH, *state->SPL);
+    for(int i = 0; i < 32; i++){
+        fprintf(stderr, "R%02d: 0x%02X", i, state->registers[i]);
+        if((i + 1) % 4 == 0){
+            fprintf(stderr, "\n");
+        } else {
+            fprintf(stderr, "    ");
+        }
+    }
 }
 
 int emulateAVROp(AVRState *state){
@@ -349,6 +372,8 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xC000) == 0x4000){
         int Rd = ((*code & 0x00F0) >> 4) + 16;
         int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
+        uint16_t result;
+        uint8_t newSREG;
         switch(*code & 0x3000){
             case 0x0000: 
 //				sprintf(name, "SBCI R%1$d, %2$d", Rd, K);
@@ -462,12 +487,12 @@ int emulateAVROp(AVRState *state){
             case 0x0000:
                 sprintf(name, "LDS R%d, 0x%04x", Rd, code[1]);
 				unimplementedInstruction(name, state); 
-                opWords = 2;
+                incr = 2;
                 break;
             case 0x0200:
                 sprintf(name, "STS 0x%04x, R%d", code[1], Rd);
 				unimplementedInstruction(name, state); 
-                opWords = 2;
+                incr = 2;
                 break;
             case 0x0001:
                 sprintf(name, "LD R%d, Z+", Rd);
@@ -777,7 +802,7 @@ int emulateAVROp(AVRState *state){
                         unimplementedInstruction(name, state);
                         break;
                 }
-                opWords = 2;
+                incr = 2;
                 break;
             }
         }
@@ -804,19 +829,19 @@ int emulateAVROp(AVRState *state){
         int bit = (*code & 0x0007);
         switch(*code & 0x0300){
             case 0x0000: 
-                sprintf(name, "CBI %s, %d", ioMap[Ra], bit); 
+                sprintf(name, "CBI IO%d, %d", Ra, bit); 
                 unimplementedInstruction(name, state);
                 break;
             case 0x0200: 
-                sprintf(name, "SBI %s, %d", ioMap[Ra], bit); 
+                sprintf(name, "SBI IO%d, %d", Ra, bit); 
                 unimplementedInstruction(name, state);
                 break;
             case 0x0100: 
-                sprintf(name, "SBIC %s, %d", ioMap[Ra], bit); 
+                sprintf(name, "SBIC IO%d, %d", Ra, bit); 
                 unimplementedInstruction(name, state);
                 break;
             case 0x0300: 
-                sprintf(name, "SBIS %s, %d", ioMap[Ra], bit); 
+                sprintf(name, "SBIS IO%d, %d", Ra, bit); 
                 unimplementedInstruction(name, state);
                 break;
         }
@@ -836,39 +861,50 @@ int emulateAVROp(AVRState *state){
         int Rd = (*code & 0x01F0) >> 4;
         switch(*code & 0x0800){
             case 0x0000: 
-                sprintf(name, "IN R%d, %s", Rd, ioMap[Rio]); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "IN R%d, IO%d", Rd, Rio); 
+                state->registers[Rd] = state->ioRegs[Rio];
                 break;
             case 0x0800: 
-                sprintf(name, "OUT %s, R%d", ioMap[Rio], Rd); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "OUT IO%d, R%d", Rio, Rd); 
+                state->ioRegs[Rio] = state->registers[Rd];
                 break;
         }
     }
     //RJMP/RCALL to PC + signed 12 bit immediate value
     else if((*code & 0xE000) == 0xC000){
         int16_t offset = *code & 0x0FFF;
+        uint16_t sp = ((uint16_t)(*(state->SPH)) << 8) | *(state->SPL);
         //Offset is signed, sign extension required
         if(offset & 0x0800)
             offset |= 0xF000;
         switch(*code & 0x1000){
             case 0x0000: 
-                sprintf(name, "RJMP %d", offset); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "RJMP %d", offset); 
+                state->pc += offset;
                 break;
             case 0x1000: 
-                sprintf(name, "RCALL %d", offset); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "RCALL %d", offset); 
+                state->memory[sp] = (state->pc + 1) & 0x000000FF;
+                state->memory[sp - 1] = ((state->pc + 1) & 0x0000FF00) >> 8;
+                if(state->progSize > 65535){
+                    state->memory[sp - 2] = ((state->pc + 1) & 0x001F0000) >> 16;
+                    sp = sp - 3;
+                } else {
+                    sp = sp - 2;
+                }
+                *(state->SPH) = (sp & 0xFF00) >> 8;
+                *(state->SPL) = (sp & 0x00FF);
+                state->pc += offset;
                 break;
         }
     }
     //LDI
     //Load immediate into registers 16 to 31
     else if((*code & 0xF000) == 0xE000){
-        int K = ((*code & 0x0F00) >> 4) | (*code & 0x000F);
+        uint8_t K = ((*code & 0x0F00) >> 4) | (*code & 0x000F);
         int Rd = ((*code & 0x00F0) >> 4) + 16; //16 <= Rd <= 31
-        sprintf(name, "LDI R%1$d, %2$X", Rd, K);
-        unimplementedInstruction(name, state);
+//      sprintf(name, "LDI R%1$d, %2$X", Rd, K);
+        state->registers[Rd] = K;
     }
     //SBRC/SBRS, BLD/BST
     else if((*code & 0xF808) == 0xF800){
@@ -884,11 +920,11 @@ int emulateAVROp(AVRState *state){
                 unimplementedInstruction(name, state);
                 break;
             case 0x0400: 
-                sprintf(name, "SBRC R%1$d, %2$d", Rd, bit, 1 << bit); 
+                sprintf(name, "SBRC R%1$d, %2$d", Rd, bit); 
                 unimplementedInstruction(name, state);
                 break;
             case 0x0600: 
-                sprintf(name, "SBRS R%1$d, %2$d", Rd, bit, 1 << bit); 
+                sprintf(name, "SBRS R%1$d, %2$d", Rd, bit); 
                 unimplementedInstruction(name, state);
                 break;
         }
@@ -913,8 +949,10 @@ int emulateAVROp(AVRState *state){
                 unimplementedInstruction(name, state);
                 break;
             case 0x0401: 
-                sprintf(name, "BRNE %d", offset); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "BRNE %d", offset); 
+                if(!(*state->SREG & Z)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0002: 
                 sprintf(name, "BRMI %d", offset); 
