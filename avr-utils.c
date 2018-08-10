@@ -79,3 +79,17 @@ int buildSubroutineTable(uint16_t *codeBuffer, uint32_t pc, uint32_t *subBuffer,
     }
     return 1;
 }
+
+int instructionWords(uint16_t opCode){
+    switch(opCode & 0xF000){
+        case 0x9000:
+            if((opCode & 0x0E0E) == 0x040E){
+                return 2;
+            } else if((opCode & 0x0E0E) == 0x040C){
+                return 2;
+            }
+            break;
+        default: break;
+    }
+    return 1;
+}

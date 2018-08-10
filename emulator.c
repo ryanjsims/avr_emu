@@ -11,48 +11,8 @@
 
 void unimplementedInstruction(char *name, AVRState *state);
 
-uint8_t arithSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result){
-    uint8_t newSREG = *(state->SREG);
-    if(result != 0){
-        newSREG &= ~Z;
-    } else {
-        newSREG |= Z;
-    }
-
-    if(result > 0xFF){
-        newSREG |= C;
-    } else {
-        newSREG &= ~C;
-    }
-
-    if(result & 0x80){
-        newSREG |= N;
-    } else {
-        newSREG &= ~N;
-    }
-
-    if((valRd & ~valRr & ~result & 0x80) |
-            (~valRd & valRr & result & 0x80)){
-        newSREG |= V;
-    } else {
-        newSREG &= ~V;
-    }
-
-    if((newSREG & N) ^ (newSREG & V)){
-        newSREG |= S;
-    } else {
-        newSREG &= ~S;
-    }
-
-    if(((~valRd & valRr) |
-            (valRr & result) |
-            (result & ~valRd)) & 0x08){
-        newSREG |= H;
-    } else {
-        newSREG &= ~H;
-    }
-    return newSREG;
-}
+uint8_t arithSubSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
+uint8_t arithAddSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
 
 int main(int argc, char** argv){
     if(argc < 2){
@@ -107,6 +67,92 @@ AVRState *createAVR(FILE* elfFile,
         }
     }
     return state;
+}
+
+uint8_t arithSubSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result){
+    uint8_t newSREG = *(state->SREG);
+    if((result & 0xFF) != 0){
+        newSREG &= ~Z;
+    } else {
+        newSREG |= Z;
+    }
+
+    if(result > 0xFF){
+        newSREG |= C;
+    } else {
+        newSREG &= ~C;
+    }
+
+    if(result & 0x80){
+        newSREG |= N;
+    } else {
+        newSREG &= ~N;
+    }
+
+    if((valRd & ~valRr & ~result & 0x80) |
+            (~valRd & valRr & result & 0x80)){
+        newSREG |= V;
+    } else {
+        newSREG &= ~V;
+    }
+
+    if((newSREG & N) ^ ((newSREG & V) >> 1)){
+        newSREG |= S;
+    } else {
+        newSREG &= ~S;
+    }
+
+    if(((~valRd & valRr) |
+            (valRr & result) |
+            (result & ~valRd)) & 0x08){
+        newSREG |= H;
+    } else {
+        newSREG &= ~H;
+    }
+    return newSREG;
+}
+
+uint8_t arithAddSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result){
+    uint8_t newSREG = *(state->SREG);
+    if((result & 0xFF) != 0){
+        newSREG &= ~Z;
+    } else {
+        newSREG |= Z;
+    }
+
+    if(result > 0xFF){
+        newSREG |= C;
+    } else {
+        newSREG &= ~C;
+    }
+
+    if(result & 0x80){
+        newSREG |= N;
+    } else {
+        newSREG &= ~N;
+    }
+
+    if((valRd & valRr & ~result & 0x80) |
+            (~valRd & ~valRr & result & 0x80)){
+        newSREG |= V;
+    } else {
+        newSREG &= ~V;
+    }
+
+    if((newSREG & N) ^ ((newSREG & V) >> 1) ){
+        newSREG |= S;
+    } else {
+        newSREG &= ~S;
+    }
+
+    if(((valRd & valRr) |
+            (valRr & ~result) |
+            (~result & valRd)) & 0x08){
+        newSREG |= H;
+    } else {
+        newSREG &= ~H;
+    }
+    return newSREG;
 }
 
 void unimplementedInstruction(char *name, AVRState *state){
@@ -180,46 +226,64 @@ int emulateAVROp(AVRState *state){
 				unimplementedInstruction(name, state); 
 				break;
             case 0x0400: 
-				sprintf(name, "CPC R%1$d, R%2$d", Rd, Rr); 
-                unimplementedInstruction(name, state);
+//				sprintf(name, "CPC R%1$d, R%2$d", Rd, Rr); 
                 result = (uint16_t)(state->registers[Rd]) - (uint16_t)(state->registers[Rr]);
 				result -= (*(state->SREG) & C) ? 1 : 0;
-                newSREG = arithSREG(state, state->registers[Rd], state->registers[Rr], result);
+                newSREG = arithSubSREG(state, state->registers[Rd], state->registers[Rr], result);
                 if(result == 0){
                     *(state->SREG) = newSREG;
                 } else {
-                    //TODO: Finish this!
+                    *(state->SREG) = (newSREG & ~Z) | (*(state->SREG) & Z);
                 }
                 break;
             case 0x1400: 
-				sprintf(name, "CP R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "CP R%1$d, R%2$d", Rd, Rr);
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)(state->registers[Rr]);
+                *(state->SREG) = arithSubSREG(state, state->registers[Rd], state->registers[Rr], result);
 				break;
             case 0x0800: 
-				sprintf(name, "SBC R%1$d, R%2$d", Rd, Rr); 
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "SBC R%1$d, R%2$d", Rd, Rr); 
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)(state->registers[Rr]);
+				result -= (*(state->SREG) & C) ? 1 : 0;
+                newSREG = arithSubSREG(state, state->registers[Rd], state->registers[Rr], result);
+                if(result == 0){
+                    *(state->SREG) = newSREG;
+                } else {
+                    *(state->SREG) = (newSREG & ~Z) | (*(state->SREG) & Z);
+                }
+                state->registers[Rd] = result & 0xFF;
 				break;
             case 0x1800: 
-				sprintf(name, "SUB R%1$d, R%2$d", Rd, Rr);	
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "SUB R%1$d, R%2$d", Rd, Rr);
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)(state->registers[Rr]);
+                *(state->SREG) = arithSubSREG(state, state->registers[Rd], state->registers[Rr], result);
+                state->registers[Rd] = result & 0xFF;
 				break;
             case 0x0C00:
-                if(Rd == Rr)
+                /*if(Rd == Rr)
                     sprintf(name, "LSL R%1$d", Rd);
                 else
-                    sprintf(name, "ADD R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+                    sprintf(name, "ADD R%1$d, R%2$d", Rd, Rr);*/
+                result = (uint16_t)(state->registers[Rd]) + (uint16_t)(state->registers[Rr]);
+                *(state->SREG) = arithAddSREG(state, state->registers[Rd], state->registers[Rr], result);
+                state->registers[Rd] = result & 0xFF;
                 break;
             case 0x1C00:
-                if(Rd == Rr)
+                /*if(Rd == Rr)
                     sprintf("ROL R%1$d", Rd);
                 else
-                    sprintf("ADC R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+                    sprintf("ADC R%1$d, R%2$d", Rd, Rr);*/
+                result = (uint16_t)(state->registers[Rd]) + (uint16_t)(state->registers[Rr]);
+				result += (*(state->SREG) & C) ? 1 : 0;
+                *(state->SREG) = arithAddSREG(state, state->registers[Rd], state->registers[Rr], result);
+                state->registers[Rd] = result & 0xFF;
                 break;
             case 0x1000: 
 				sprintf(name, "CPSE R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+				unimplementedInstruction(name, state);
+                if(state->registers[Rd] == state->registers[Rr]){
+                    
+                }
 				break;
             case 0x2000: 
 				sprintf(name, "AND R%1$d, R%2$d", Rd, Rr);
