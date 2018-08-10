@@ -6,11 +6,14 @@
  *     uint8_t  *SREG, *SPH, *SPL, *RAMPX, *RAMPY, *RAMPZ, *RAMPD, *EIND;
  *     uint32_t progSize, memSize;
  *     uint32_t pc;
+ *     char ** ioMap;
+ *     int ioMapLen;
  * } AVRState;
  */
 
 void unimplementedInstruction(char *name, AVRState *state);
 void dumpRegisters(AVRState *state);
+void dumpIORegisters(AVRState *state);
 
 uint8_t arithSubSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
 uint8_t arithAddSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
@@ -77,6 +80,8 @@ AVRState *createAVR(FILE* elfFile,
             state->EIND = &(state->ioRegs[i]);
         }
     }
+    state->ioMap = ioMap;
+    state->ioMapLen = ioMapLen;
     return state;
 }
 
@@ -191,11 +196,13 @@ uint8_t logicSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result
 void unimplementedInstruction(char *name, AVRState *state){
 	fprintf(stderr, "Error: opcode %s (@ 0x%04X) not implemented\n", name, state->pc);
     dumpRegisters(state);
+    dumpIORegisters(state);
 	exit(1);
 }
 
 void dumpRegisters(AVRState *state){
-    fprintf(stderr, "Registers:\n");
+    fprintf(stderr, "\nRegisters:\n");
+    fprintf(stderr, "        ITHSVNZC\n");
     fprintf(stderr, "SREG: 0b");
     for(int i = 0; i < 8; i++){
         fprintf(stderr, "%d", (*(state->SREG) & 0x80 >> i) ? 1 : 0);
@@ -208,6 +215,17 @@ void dumpRegisters(AVRState *state){
         } else {
             fprintf(stderr, "    ");
         }
+    }
+}
+
+void dumpIORegisters(AVRState *state){
+    fprintf(stderr, "\nIO Registers:\n");
+    for(int i = state->ioMapLen - 1; i >= 0; i--){
+        fprintf(stderr, "\t%s:\t0b", state->ioMap[i]);
+        for(int j = 0; j < 8; j++){
+            fprintf(stderr, "%d", (state->ioRegs[i] & 0x80 >> j) ? 1 : 0);
+        }
+        fprintf(stderr, "\n");
     }
 }
 
@@ -483,6 +501,10 @@ int emulateAVROp(AVRState *state){
     //Load-store operations
     else if((*code & 0xFC00) == 0x9000){
         int Rd = (*code & 0x01F0) >> 4;
+        uint16_t pX = (((uint16_t)state->registers[27]) << 8) | state->registers[26];
+        uint16_t pY = (((uint16_t)state->registers[29]) << 8) | state->registers[28];
+        uint16_t pZ = (((uint16_t)state->registers[31]) << 8) | state->registers[30];
+        uint16_t sp = (((uint16_t)*state->SPH) << 8) | *state->SPL;
         switch(*code & 0x020F){
             case 0x0000:
                 sprintf(name, "LDS R%d, 0x%04x", Rd, code[1]);
@@ -527,16 +549,22 @@ int emulateAVROp(AVRState *state){
 				unimplementedInstruction(name, state); 
                 break;
             case 0x0004:
-                sprintf(name, "LPM R%d, Z", Rd);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "LPM R%d, Z", Rd);
+                state->registers[Rd] = (pZ % 2 == 0) ? 
+                    (state->program[pZ >> 1] & 0x00FF) : 
+                    (state->program[pZ >> 1] & 0xFF00) >> 8;
                 break;
             case 0x0006:
                 sprintf(name, "ELPM R%d, Z", Rd);
 				unimplementedInstruction(name, state); 
                 break;
             case 0x0005:
-                sprintf(name, "LPM R%d, Z+", Rd);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "LPM R%d, Z+", Rd);
+                state->registers[Rd] = (pZ % 2 == 0) ? 
+                    (state->program[pZ >> 1] & 0x00FF) : 
+                    (state->program[pZ >> 1] & 0xFF00) >> 8;
+                state->registers[31] = ((pZ + 1) & 0xFF00) >> 8;
+                state->registers[30] = (pZ + 1) & 0x00FF;
                 break;
             case 0x0007:
                 sprintf(name, "ELPM R%d, Z+", Rd);
@@ -563,16 +591,18 @@ int emulateAVROp(AVRState *state){
 				unimplementedInstruction(name, state); 
                 break;
             case 0x020C:
-                sprintf(name, "ST X, R%d", Rd);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "ST X, R%d", Rd);
+                state->memory[pX] = state->registers[Rd];
                 break;
             case 0x000D:
                 sprintf(name, "LD R%d, X+", Rd);
 				unimplementedInstruction(name, state); 
                 break;
             case 0x020D:
-                sprintf(name, "ST X+, R%d", Rd);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "ST X+, R%d", Rd);
+                state->memory[pX] = state->registers[Rd];
+                state->registers[27] = ((pX + 1) & 0xFF00) >> 8;
+                state->registers[26] = (pX + 1) & 0x00FF;
                 break;
             case 0x000E:
                 sprintf(name, "LD R%d, -X", Rd);
@@ -583,12 +613,16 @@ int emulateAVROp(AVRState *state){
 				unimplementedInstruction(name, state); 
                 break;
             case 0x000F:
-                sprintf(name, "POP R%d", Rd);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "POP R%d", Rd);
+                state->registers[Rd] = state->memory[sp+1];
+                *(state->SPH) = ((sp + 1) & 0xFF00) >> 8;
+                *(state->SPL) = (sp + 1) & 0x00FF;
                 break;
             case 0x020F:
-                sprintf(name, "PUSH R%d", Rd);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "PUSH R%d", Rd);
+                state->memory[sp] = state->registers[Rd];
+                *(state->SPH) = ((sp - 1) & 0xFF00) >> 8;
+                *(state->SPL) = (sp - 1) & 0x00FF;
                 break;
             default:
                 sprintf(name, "LD/ST reserved");
@@ -686,68 +720,68 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xFF0F) == 0x9408){
         switch(*code & 0x00F0){
             case 0x0000: 
-                sprintf(name, "SEC"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SEC"); 
+                *(state->SREG) |= C;
                 break;
             case 0x0010: 
-                sprintf(name, "SEZ"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SEZ"); 
+                *(state->SREG) |= Z;
                 break;
             case 0x0020: 
-                sprintf(name, "SEN"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SEN"); 
+                *(state->SREG) |= N;
                 break;
             case 0x0030: 
-                sprintf(name, "SEV"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SEV"); 
+                *(state->SREG) |= V;
                 break;
             case 0x0040: 
-                sprintf(name, "SES"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SES"); 
+                *(state->SREG) |= S;
                 break;
             case 0x0050: 
-                sprintf(name, "SEH"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SEH"); 
+                *(state->SREG) |= H;
                 break;
             case 0x0060: 
-                sprintf(name, "SET"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SET"); 
+                *(state->SREG) |= T;
                 break;
             case 0x0070: 
-                sprintf(name, "SEI"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SEI"); 
+                *(state->SREG) |= I;
                 break;
             case 0x0080: 
-                sprintf(name, "CLC"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLC"); 
+                *(state->SREG) &= ~C;
                 break;
             case 0x0090: 
-                sprintf(name, "CLZ"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLZ"); 
+                *(state->SREG) &= ~Z;
                 break;
             case 0x00A0: 
-                sprintf(name, "CLN"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLN"); 
+                *(state->SREG) &= ~N;
                 break;
             case 0x00B0: 
-                sprintf(name, "CLV"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLV"); 
+                *(state->SREG) &= ~V;
                 break;
             case 0x00C0: 
-                sprintf(name, "CLS"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLS"); 
+                *(state->SREG) &= ~S;
                 break;
             case 0x00D0: 
-                sprintf(name, "CLH"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLH"); 
+                *(state->SREG) &= ~H;
                 break;
             case 0x00E0: 
-                sprintf(name, "CLT"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLT"); 
+                *(state->SREG) &= ~T;
                 break;
             case 0x00F0: 
-                sprintf(name, "CLI"); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "CLI"); 
+                *(state->SREG) &= ~I;
                 break;
         }
     }
@@ -809,16 +843,66 @@ int emulateAVROp(AVRState *state){
     }
     //ADIW/SBIW
     else if((*code & 0xFE00) == 0x9600){
-        int k = ((*code & 0x00C0) >> 2) | (*code & 0x000F);
+        uint8_t k = ((*code & 0x00C0) >> 2) | (*code & 0x000F);
         int Rp = ((*code & 0x0030) >> 4) * 2 + 24; //Rp in (24, 26, 28, 30}
+        uint16_t result = (((uint16_t)state->registers[Rp + 1]) << 8) | state->registers[Rp];
         switch(*code & 0x0100){
             case 0x0000: 
-                sprintf(name, "ADIW R%d, %d", Rp, k); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "ADIW R%d, %d", Rp, k); 
+                result += k;
+                if(result == 0)
+                    *(state->SREG) |= Z;
+                else
+                    *(state->SREG) &= ~Z;
+                
+                if(((result >> 8) & ~(state->registers[Rp + 1])) & 0x80)
+                    *(state->SREG) |= V;
+                else
+                    *(state->SREG) &= ~V;
+
+                if((~(result >> 8) & (state->registers[Rp + 1])) & 0x80)
+                    *(state->SREG) |= C;
+                else
+                    *(state->SREG) &= ~C;
+
+                if(result & 0x8000)
+                    *(state->SREG) |= N;
+                else
+                    *(state->SREG) &= ~N;
+
+                if(((*(state->SREG) & V) >> 1) ^ (*(state->SREG) & N))
+                    *(state->SREG) |= S;
+                else
+                    *(state->SREG) &= ~S;
+
+                state->registers[Rp + 1] = result >> 8;
+                state->registers[Rp] = result & 0x00FF;
                 break;
             case 0x0100: 
-                sprintf(name, "SBIW R%d, %d", Rp, k); 
-                unimplementedInstruction(name, state);
+//              sprintf(name, "SBIW R%d, %d", Rp, k); 
+                result -= k;
+                if(result == 0)
+                    *(state->SREG) |= Z;
+                else
+                    *(state->SREG) &= ~Z;
+                
+                if(((result >> 8) & ~(state->registers[Rp + 1])) & 0x80)
+                    *(state->SREG) |= C | V;
+                else
+                    *(state->SREG) &= ~(C | V);
+
+                if(result & 0x8000)
+                    *(state->SREG) |= N;
+                else
+                    *(state->SREG) &= ~N;
+
+                if(((*(state->SREG) & V) >> 1) ^ (*(state->SREG) & N))
+                    *(state->SREG) |= S;
+                else
+                    *(state->SREG) &= ~S;
+
+                state->registers[Rp + 1] = result >> 8;
+                state->registers[Rp] = result & 0x00FF;
                 break;
         }
     }

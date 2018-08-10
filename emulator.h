@@ -20,6 +20,8 @@ typedef struct AVRState_struct {
     uint8_t  *SREG, *SPH, *SPL, *RAMPX, *RAMPY, *RAMPZ, *RAMPD, *EIND;
 	uint32_t progSize, memSize;
 	uint32_t pc;
+    char **ioMap;
+    int ioMapLen;
 } AVRState;
 
 AVRState *createAVR(FILE* elfFile, 
