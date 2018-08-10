@@ -13,6 +13,7 @@ void unimplementedInstruction(char *name, AVRState *state);
 
 uint8_t arithSubSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
 uint8_t arithAddSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
+uint8_t logicSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result);
 
 int main(int argc, char** argv){
     if(argc < 2){
@@ -155,6 +156,28 @@ uint8_t arithAddSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t res
     return newSREG;
 }
 
+uint8_t logicSREG(AVRState *state, uint8_t valRd, uint8_t valRr, uint16_t result){
+    uint8_t newSREG = *(state->SREG);
+    if((result & 0xFF) == 0)
+        newSREG |= Z;
+    else
+        newSREG &= ~Z;
+    
+    if(result & 0x80)
+        newSREG |= N;
+    else
+        newSREG &= ~N;
+    
+    newSREG &= ~V;
+
+    if((newSREG & N) ^ ((newSREG & V) >> 1) )
+        newSREG |= S;
+    else
+        newSREG &= ~S;
+
+    return newSREG;
+}
+
 void unimplementedInstruction(char *name, AVRState *state){
 	fprintf(stderr, "Error: opcode %s (0x%04X) not implemented\n", name, state->memory[state->pc]);
 	exit(1);
@@ -279,16 +302,18 @@ int emulateAVROp(AVRState *state){
                 state->registers[Rd] = result & 0xFF;
                 break;
             case 0x1000: 
-				sprintf(name, "CPSE R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state);
+//				sprintf(name, "CPSE R%1$d, R%2$d", Rd, Rr);
                 if(state->registers[Rd] == state->registers[Rr]){
-                    
+                    incr = 1 + instructionWords(code[1]);
                 }
 				break;
             case 0x2000: 
 				sprintf(name, "AND R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
-				break;
+				unimplementedInstruction(name, state);
+                result = state->registers[Rd] & state->registers[Rr];
+                *(state->SREG) = logicSREG(state, state->registers[Rd], state->registers[Rr], result);
+				state->registers[Rd] = result & 0xFF;
+                break;
             case 0x2400: 
 				sprintf(name, "EOR R%1$d, R%2$d", Rd, Rr);
 				unimplementedInstruction(name, state); 
