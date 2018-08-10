@@ -48,6 +48,11 @@ AVRState *createAVR(FILE* elfFile,
     state->ioRegs = &(state->memory[numRegs]);
     state->SRAM = &(state->memory[numRegs + numIO]);
     state->pc = 0;
+    state->RAMPX = NULL;
+    state->RAMPY = NULL;
+    state->RAMPZ = NULL;
+    state->RAMPD = NULL;
+    state->EIND = NULL;
     for(int i = 0; i < ioMapLen; i++){
         if(strcmp(ioMap[i], "SREG") == 0){
             state->SREG = &(state->ioRegs[i]);
@@ -381,42 +386,71 @@ int emulateAVROp(AVRState *state){
     else if((*code & 0xD000) == 0x8000){
         int Rd = (*code & 0x01F0) >> 4;
         int K = ((*code & 0x2000) >> 8) + ((*code & 0x0C00) >> 7) + (*code & 0x0007);
+        uint32_t loc = 0;
         if(K != 0){
             switch(*code & 0x0208){
                 case 0x0000:
-                    sprintf(name, "LDD R%d, Z + %d", Rd, K); 
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "LDD R%d, Z + %d", Rd, K); 
+                    if(state->RAMPZ)
+                        loc = ((*state->RAMPZ) << 16);
+                    loc |= (state->registers[31] << 8) | (state->registers[30]);
+                    loc += K;
+                    state->registers[Rd] = state->memory[loc];
                     break;
                 case 0x0008:
-                    sprintf(name, "LDD R%d, Y + %d", Rd, K);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "LDD R%d, Y + %d", Rd, K);
+                    if(state->RAMPY)
+                        loc = ((*state->RAMPY) << 16);
+                    loc |= (state->registers[29] << 8) | (state->registers[28]);
+                    loc += K;
+                    state->registers[Rd] = state->memory[loc];
                     break;
                 case 0x0200:
-                    sprintf(name, "STD Z + %d, R%d", K, Rd);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "STD Z + %d, R%d", K, Rd);
+                    if(state->RAMPZ)
+                        loc = ((*state->RAMPZ) << 16);
+                    loc |= (state->registers[31] << 8) | (state->registers[30]);
+                    loc += K;
+                    state->memory[loc] = state->registers[Rd];
                     break;
                 case 0x0208:
-                    sprintf(name, "STD Y + %d, R%d", K, Rd);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "STD Y + %d, R%d", K, Rd);
+                    if(state->RAMPY)
+                        loc = ((*state->RAMPY) << 16);
+                    loc |= (state->registers[29] << 8) | (state->registers[28]);
+                    loc += K;
+                    state->memory[loc] = state->registers[Rd];
                     break;
             }
         } else {
             switch(*code & 0x0208){
                 case 0x0000:
-                    sprintf(name, "LD R%d, Z", Rd);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "LD R%d, Z", Rd);
+                    if(state->RAMPZ)
+                        loc = ((*state->RAMPZ) << 16);
+                    loc |= (state->registers[31] << 8) | (state->registers[30]);
+                    state->registers[Rd] = state->memory[loc];
                     break;
                 case 0x0008:
-                    sprintf(name, "LD R%d, Y", Rd);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "LD R%d, Y", Rd);
+                    if(state->RAMPY)
+                        loc = ((*state->RAMPY) << 16);
+                    loc |= (state->registers[29] << 8) | (state->registers[28]);
+                    state->registers[Rd] = state->memory[loc];
                     break;
                 case 0x0200:
-                    sprintf(name, "ST Z, R%d", Rd);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "ST Z, R%d", Rd);
+                    if(state->RAMPZ)
+                        loc = ((*state->RAMPZ) << 16);
+                    loc |= (state->registers[31] << 8) | (state->registers[30]);
+                    state->memory[loc] = state->registers[Rd];
                     break;
                 case 0x0208:
-                    sprintf(name, "ST Y, R%d", Rd);
-				    unimplementedInstruction(name, state); 
+//                  sprintf(name, "ST Y, R%d", Rd);
+                    if(state->RAMPY)
+                        loc = ((*state->RAMPY) << 16);
+                    loc |= (state->registers[29] << 8) | (state->registers[28]);
+                    state->memory[loc] = state->registers[Rd];
                     break;
             }
         }
