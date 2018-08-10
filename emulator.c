@@ -308,30 +308,34 @@ int emulateAVROp(AVRState *state){
                 }
 				break;
             case 0x2000: 
-				sprintf(name, "AND R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state);
+//				sprintf(name, "AND R%1$d, R%2$d", Rd, Rr);
                 result = state->registers[Rd] & state->registers[Rr];
                 *(state->SREG) = logicSREG(state, state->registers[Rd], state->registers[Rr], result);
 				state->registers[Rd] = result & 0xFF;
                 break;
             case 0x2400: 
-				sprintf(name, "EOR R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "EOR R%1$d, R%2$d", Rd, Rr);
+                result = state->registers[Rd] ^ state->registers[Rr];
+                *(state->SREG) = logicSREG(state, state->registers[Rd], state->registers[Rr], result);
+				state->registers[Rd] = result & 0xFF;
 				break;
             case 0x2800: 
-				sprintf(name, "OR R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "OR R%1$d, R%2$d", Rd, Rr);
+                result = state->registers[Rd] | state->registers[Rr];
+                *(state->SREG) = logicSREG(state, state->registers[Rd], state->registers[Rr], result);
+				state->registers[Rd] = result & 0xFF;
 				break;
             case 0x2C00: 
-				sprintf(name, "MOV R%1$d, R%2$d", Rd, Rr);
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "MOV R%1$d, R%2$d", Rd, Rr);
+                state->registers[Rd] = state->registers[Rr];
 				break;
             default:{
           //case 0x3X00:
                 Rd = (Rd & 0x000F) + 16;
                 int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
-                sprintf(name, "CPI R%d, %d", Rd, K);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "CPI R%d, %d", Rd, K);
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)K;
+                *(state->SREG) = arithSubSREG(state, state->registers[Rd], K, result);
                 break;
             }
         }
@@ -342,20 +346,34 @@ int emulateAVROp(AVRState *state){
         int K = ((*code & 0x0F00) >> 4) + (*code & 0x000F);
         switch(*code & 0x3000){
             case 0x0000: 
-				sprintf(name, "SBCI R%1$d, %2$d", Rd, K);
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "SBCI R%1$d, %2$d", Rd, K);
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)K;
+				result -= (*(state->SREG) & C) ? 1 : 0;
+                newSREG = arithSubSREG(state, state->registers[Rd], K, result);
+                if(result == 0){
+                    *(state->SREG) = newSREG;
+                } else {
+                    *(state->SREG) = (newSREG & ~Z) | (*(state->SREG) & Z);
+                }
+                state->registers[Rd] = result & 0xFF;
 				break;
             case 0x1000: 
-				sprintf(name, "SUBI R%1$d, %2$d", Rd, K);
-				unimplementedInstruction(name, state); 
+//				sprintf(name, "SUBI R%1$d, %2$d", Rd, K);
+                result = (uint16_t)(state->registers[Rd]) - (uint16_t)K;
+                *(state->SREG) = arithSubSREG(state, state->registers[Rd], K, result);
+                state->registers[Rd] = result & 0xFF;
 				break;
             case 0x2000: 
-                sprintf(name, "ORI R%1$d, %2$d", Rd, K);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "ORI R%1$d, %2$d", Rd, K);
+                result = state->registers[Rd] | K;
+                *(state->SREG) = logicSREG(state, state->registers[Rd], K, result);
+				state->registers[Rd] = result & 0xFF;
                 break;
             case 0x3000: 
-                sprintf(name, "ANDI R%1$d, %2$d", Rd, K);
-				unimplementedInstruction(name, state); 
+//              sprintf(name, "ANDI R%1$d, %2$d", Rd, K);
+                result = state->registers[Rd] & K;
+                *(state->SREG) = logicSREG(state, state->registers[Rd], K, result);
+				state->registers[Rd] = result & 0xFF;
                 break;
         }
     }
