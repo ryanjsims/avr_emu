@@ -507,30 +507,38 @@ int emulateAVROp(AVRState *state){
         uint16_t sp = (((uint16_t)*state->SPH) << 8) | *state->SPL;
         switch(*code & 0x020F){
             case 0x0000:
-                sprintf(name, "LDS R%d, 0x%04x", Rd, code[1]);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "LDS R%d, 0x%04x", Rd, code[1]);
+				state->registers[Rd] = state->memory[code[1]];
                 incr = 2;
                 break;
             case 0x0200:
-                sprintf(name, "STS 0x%04x, R%d", code[1], Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "STS 0x%04x, R%d", code[1], Rd);
+				state->memory[code[1]] = state->registers[Rd];
                 incr = 2;
                 break;
             case 0x0001:
-                sprintf(name, "LD R%d, Z+", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "LD R%d, Z+", Rd);
+				state->registers[Rd] = state->memory[pZ];
+                state->registers[31] = ((pZ + 1) & 0xFF00) >> 8;
+                state->registers[30] = (pZ + 1) & 0x00FF;
                 break;
             case 0x0009:
-                sprintf(name, "LD R%d, Y+", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "LD R%d, Y+", Rd);
+				state->registers[Rd] = state->memory[pY];
+                state->registers[29] = ((pY + 1) & 0xFF00) >> 8;
+                state->registers[28] = (pY + 1) & 0x00FF;
                 break;
             case 0x0201:
-                sprintf(name, "ST Z+, R%d", Rd); 
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "ST Z+, R%d", Rd); 
+				state->memory[pZ] = state->registers[Rd];
+                state->registers[31] = ((pZ + 1) & 0xFF00) >> 8;
+                state->registers[30] = (pZ + 1) & 0x00FF;
                 break;
             case 0x0209:
-                sprintf(name, "ST Y+, R%d", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "ST Y+, R%d", Rd);
+				state->memory[pY] = state->registers[Rd];
+                state->registers[29] = ((pY + 1) & 0xFF00) >> 8;
+                state->registers[28] = (pY + 1) & 0x00FF;
                 break;
             case 0x0002:
                 sprintf(name, "LD R%d, -Z", Rd);
@@ -811,8 +819,25 @@ int emulateAVROp(AVRState *state){
                 break;
             case 0x0002:{
                 int Rd = (*code & 0x01F0) >> 4;
-                sprintf(name, "DEC R%d", Rd);
-                unimplementedInstruction(name, state);
+                uint8_t result = state->registers[Rd] - 1;
+				//sprintf(name, "DEC R%d", Rd);
+				if(result == 0x7F)
+					*state->SREG |= V;
+				else
+					*state->SREG &= ~V;
+				if(result == 0)
+					*state->SREG |= Z;
+				else
+					*state->SREG &= ~Z;
+				if(result & 0x80)
+					*state->SREG |= N;
+				else
+					*state->SREG &= ~N;
+				if(((result & V) >> 1) ^ (result & N))
+					*state->SREG |= S;
+				else
+					*state->SREG &= ~S;
+				state->registers[Rd] = result;
                 break;
             }
             case 0x0003:{
@@ -1021,16 +1046,23 @@ int emulateAVROp(AVRState *state){
             offset |= 0x80;
         switch(*code & 0x0407){
             case 0x0000: 
-                sprintf(name, "BRCS %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRCS %d", offset); 
+                if(*state->SREG & C){
+                    state->pc += offset;
+                }
                 break;
             case 0x0400: 
-                sprintf(name, "BRCC %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRCC %d", offset); 
+                if(!(*state->SREG & C)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0001: 
                 sprintf(name, "BREQ %d", offset); 
                 unimplementedInstruction(name, state);
+                if(*state->SREG & Z){
+                    state->pc += offset;
+                }
                 break;
             case 0x0401: 
 //              sprintf(name, "BRNE %d", offset); 
@@ -1039,52 +1071,76 @@ int emulateAVROp(AVRState *state){
                 }
                 break;
             case 0x0002: 
-                sprintf(name, "BRMI %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRMI %d", offset); 
+                if(*state->SREG & N){
+                    state->pc += offset;
+                }
                 break;
             case 0x0402: 
-                sprintf(name, "BRPL %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRPL %d", offset); 
+                if(!(*state->SREG & N)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0003: 
-                sprintf(name, "BRVS %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRVS %d", offset); 
+                if(*state->SREG & V){
+                    state->pc += offset;
+                }
                 break;
             case 0x0403: 
-                sprintf(name, "BRVC %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRVC %d", offset); 
+                if(!(*state->SREG & V)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0004: 
-                sprintf(name, "BRLT %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRLT %d", offset); 
+                if(*state->SREG & S){
+                    state->pc += offset;
+                }
                 break;
             case 0x0404: 
-                sprintf(name, "BRGE %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRGE %d", offset); 
+                if(!(*state->SREG & S)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0005: 
-                sprintf(name, "BRHS %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRHS %d", offset); 
+                if(*state->SREG & H){
+                    state->pc += offset;
+                }
                 break;
             case 0x0405: 
-                sprintf(name, "BRHC %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRHC %d", offset); 
+                if(!(*state->SREG & H)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0006: 
-                sprintf(name, "BRTS %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRTS %d", offset); 
+                if(*state->SREG & T){
+                    state->pc += offset;
+                }
                 break;
             case 0x0406: 
-                sprintf(name, "BRTC %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRTC %d", offset); 
+                if(!(*state->SREG & T)){
+                    state->pc += offset;
+                }
                 break;
             case 0x0007: 
-                sprintf(name, "BRIE %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRIE %d", offset); 
+                if(*state->SREG & I){
+                    state->pc += offset;
+                }
                 break;
             case 0x0407: 
-                sprintf(name, "BRID %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BRID %d", offset); 
+                if(!(*state->SREG & I)){
+                    state->pc += offset;
+                }
                 break;
         }
     }
