@@ -19,7 +19,7 @@ typedef struct AVRState_struct {
     uint8_t  *memory, *registers, *ioRegs, *SRAM;
     uint8_t  *SREG, *SPH, *SPL, *RAMPX, *RAMPY, *RAMPZ, *RAMPD, *EIND;
 	uint32_t progSize, memSize;
-	uint32_t pc;
+	uint32_t pc, prevPC;
     char **ioMap;
     int ioMapLen;
 } AVRState;

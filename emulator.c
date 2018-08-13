@@ -5,13 +5,14 @@
  *     uint8_t  *memory, *registers, *ioRegs, *SRAM;
  *     uint8_t  *SREG, *SPH, *SPL, *RAMPX, *RAMPY, *RAMPZ, *RAMPD, *EIND;
  *     uint32_t progSize, memSize;
- *     uint32_t pc;
+ *     uint32_t pc, prevPC;
  *     char ** ioMap;
  *     int ioMapLen;
  * } AVRState;
  */
 
 void unimplementedInstruction(char *name, AVRState *state);
+void breakPoint(AVRState *state);
 void dumpRegisters(AVRState *state);
 void dumpIORegisters(AVRState *state);
 
@@ -61,6 +62,9 @@ AVRState *createAVR(FILE* elfFile,
     state->RAMPZ = NULL;
     state->RAMPD = NULL;
     state->EIND = NULL;
+    state->SREG = &(state->ioRegs[0x3F]);
+    state->SPH = &(state->ioRegs[0x3E]);
+    state->SPL = &(state->ioRegs[0x3D]);
     for(int i = 0; i < ioMapLen; i++){
         if(strcmp(ioMap[i], "SREG") == 0){
             state->SREG = &(state->ioRegs[i]);
@@ -200,6 +204,13 @@ void unimplementedInstruction(char *name, AVRState *state){
 	exit(1);
 }
 
+void breakPoint(AVRState *state){
+	fprintf(stderr, "Breakpoint @ 0x%04X hit! Previous pc: 0x%04X\n", state->pc, state->prevPC);
+    dumpRegisters(state);
+    dumpIORegisters(state);
+	exit(1);
+}
+
 void dumpRegisters(AVRState *state){
     fprintf(stderr, "\nRegisters:\n");
     fprintf(stderr, "        ITHSVNZC\n");
@@ -286,7 +297,7 @@ int emulateAVROp(AVRState *state){
     //Two-operand instructions
     else if((*code & 0xC000) == 0x0000){
         int Rd = (*code & 0x01F0) >> 4;
-        int Rr = ((*code & 0x000F) + (*code & 0x0200)) >> 5;
+        int Rr = (*code & 0x000F) + ((*code & 0x0200) >> 5);
         uint16_t result;
         uint8_t newSREG;
         switch(*code & 0x3C00){
@@ -541,20 +552,28 @@ int emulateAVROp(AVRState *state){
                 state->registers[28] = (pY + 1) & 0x00FF;
                 break;
             case 0x0002:
-                sprintf(name, "LD R%d, -Z", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "LD R%d, -Z", Rd);
+                state->registers[Rd] = state->memory[pZ - 1];
+                state->registers[31] = ((pZ - 1) & 0xFF00) >> 8;
+                state->registers[30] = (pZ - 1) & 0x00FF;
                 break;
             case 0x000A:
-                sprintf(name, "LD R%d, -Y", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "LD R%d, -Y", Rd);
+                state->registers[Rd] = state->memory[pY - 1];
+                state->registers[29] = ((pY - 1) & 0xFF00) >> 8;
+                state->registers[28] = (pY - 1) & 0x00FF;
                 break;
             case 0x0202:
-                sprintf(name, "ST -Z, R%d", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "ST -Z, R%d", Rd);
+                state->memory[pZ - 1] = state->registers[Rd];
+                state->registers[31] = ((pZ - 1) & 0xFF00) >> 8;
+                state->registers[30] = (pZ - 1) & 0x00FF;
                 break;
             case 0x020A:
-                sprintf(name, "ST -Y, R%d", Rd);
-				unimplementedInstruction(name, state); 
+                //sprintf(name, "ST -Y, R%d", Rd);
+                state->memory[pY - 1] = state->registers[Rd];
+                state->registers[29] = ((pY - 1) & 0xFF00) >> 8;
+                state->registers[28] = (pY - 1) & 0x00FF;
                 break;
             case 0x0004:
 //              sprintf(name, "LPM R%d, Z", Rd);
@@ -562,10 +581,17 @@ int emulateAVROp(AVRState *state){
                     (state->program[pZ >> 1] & 0x00FF) : 
                     (state->program[pZ >> 1] & 0xFF00) >> 8;
                 break;
-            case 0x0006:
-                sprintf(name, "ELPM R%d, Z", Rd);
-				unimplementedInstruction(name, state); 
+            case 0x0006:{
+                if(state->RAMPZ == NULL){
+                    sprintf(name, "ELPM R%d, Z", Rd);
+				    unimplementedInstruction(name, state);
+                }
+                uint32_t addr = ((*state->RAMPZ) << 16) | pZ;
+                state->registers[Rd] = (addr % 2 == 0) ? 
+                    (state->program[addr >> 1] & 0x00FF) : 
+                    (state->program[addr >> 1] & 0xFF00) >> 8;
                 break;
+            }
             case 0x0005:
 //              sprintf(name, "LPM R%d, Z+", Rd);
                 state->registers[Rd] = (pZ % 2 == 0) ? 
@@ -575,13 +601,26 @@ int emulateAVROp(AVRState *state){
                 state->registers[30] = (pZ + 1) & 0x00FF;
                 break;
             case 0x0007:
-                sprintf(name, "ELPM R%d, Z+", Rd);
-				unimplementedInstruction(name, state); 
+                if(state->RAMPZ == NULL){
+                    sprintf(name, "ELPM R%d, Z+", Rd);
+				    unimplementedInstruction(name, state);
+                }
+                uint32_t addr = ((*state->RAMPZ) << 16) | pZ;
+                state->registers[Rd] = (addr % 2 == 0) ? 
+                    (state->program[addr >> 1] & 0x00FF) : 
+                    (state->program[addr >> 1] & 0xFF00) >> 8;
+                addr += 1;
+                *state->RAMPZ = (addr & 0x00FF0000) >> 16;
+                state->registers[31] = (addr & 0x0000FF00) >> 8;
+                state->registers[30] = (addr & 0x000000FF);
                 break;
-            case 0x0204:
-                sprintf(name, "XCH Z, R%d", Rd);
-				unimplementedInstruction(name, state); 
+            case 0x0204:{
+                //sprintf(name, "XCH Z, R%d", Rd);
+                uint8_t temp = state->memory[pZ];
+                state->memory[pZ] = state->registers[Rd];
+                state->registers[Rd] = temp;
                 break;
+            }
             case 0x0205:
                 sprintf(name, "LAS Z, R%d", Rd);
 				unimplementedInstruction(name, state); 
@@ -641,22 +680,48 @@ int emulateAVROp(AVRState *state){
     //Zero-operand instructions
     else if((*code & 0xFF0F) == 0x9508){
         switch(*code & 0x00F0){
-            case 0x0000:
-                sprintf(name, "RET");
-                unimplementedInstruction(name, state);
+            case 0x0000:{
+                //sprintf(name, "RET");
+                uint16_t sp = (uint16_t)(*state->SPH << 8) | (*state->SPH);
+                uint32_t newPC;
+                if(state->progSize > 65535){
+                    sp = sp - 3;
+                    newPC = (state->memory[sp - 2] << 16);
+                } else {
+                    sp = sp - 2;
+                }
+                newPC |= (state->memory[sp - 1] << 8) | (state->memory[sp]);
+                state->pc = newPC;
+                *state->SPH = (sp & 0xFF00) >> 8;
+                *state->SPL = (sp & 0x00FF);
                 break;
-            case 0x0010:
-                sprintf(name, "RETI");
-                unimplementedInstruction(name, state);
+            }
+            case 0x0010:{
+                //sprintf(name, "RETI");
+                uint16_t sp = (uint16_t)(*state->SPH << 8) | (*state->SPH);
+                uint32_t newPC;
+                if(state->progSize > 65535){
+                    sp = sp - 3;
+                    newPC = (state->memory[sp - 2] << 16);
+                } else {
+                    sp = sp - 2;
+                }
+                newPC |= (state->memory[sp - 1] << 8) | (state->memory[sp]);
+                state->pc = newPC;
+                *state->SPH = (sp & 0xFF00) >> 8;
+                *state->SPL = (sp & 0x00FF);
+                *state->SREG |= I;
                 break; //Return from interrupt - Sets I bit in SREG
+            }
             //0x0020 - 0x0070: reserved
             case 0x0080:
                 sprintf(name, "SLEEP");
                 unimplementedInstruction(name, state);
                 break;
             case 0x0090:
-                sprintf(name, "BREAK");
-                unimplementedInstruction(name, state);
+                //Break
+                //TODO: add lock bits/fuses
+                breakPoint(state);
                 break;
             case 0x00A0:
                 sprintf(name, "WDR");
@@ -989,6 +1054,7 @@ int emulateAVROp(AVRState *state){
         switch(*code & 0x1000){
             case 0x0000: 
 //              sprintf(name, "RJMP %d", offset); 
+                state->prevPC = state->pc;
                 state->pc += offset;
                 break;
             case 0x1000: 
@@ -1003,6 +1069,7 @@ int emulateAVROp(AVRState *state){
                 }
                 *(state->SPH) = (sp & 0xFF00) >> 8;
                 *(state->SPL) = (sp & 0x00FF);
+                state->prevPC = state->pc;
                 state->pc += offset;
                 break;
         }
@@ -1044,6 +1111,7 @@ int emulateAVROp(AVRState *state){
         int8_t offset = (int8_t)((*code & 0x03F8) >> 3);
         if(offset & 0x40)
             offset |= 0x80;
+        state->prevPC = state->pc;
         switch(*code & 0x0407){
             case 0x0000: 
                 //sprintf(name, "BRCS %d", offset); 
@@ -1058,8 +1126,7 @@ int emulateAVROp(AVRState *state){
                 }
                 break;
             case 0x0001: 
-                sprintf(name, "BREQ %d", offset); 
-                unimplementedInstruction(name, state);
+                //sprintf(name, "BREQ %d", offset); 
                 if(*state->SREG & Z){
                     state->pc += offset;
                 }
